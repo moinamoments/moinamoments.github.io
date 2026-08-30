@@ -41,7 +41,7 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
 
 Kontaktdaten, Impressum und Datenschutzerklärung sind vollständig ausgefüllt
-(Mehmet Gelgel, Kiel, `info@moina.world`, Kleinunternehmer nach § 19 UStG).
+(Mehmet Gelgel, Kiel, `info@moinamoments.de`, Kleinunternehmer nach § 19 UStG).
 
 ### Speisekarte pflegen
 
@@ -69,39 +69,47 @@ Der Countdown blendet sich nach Ablauf automatisch aus und zeigt „Wir sind da 
 
 ## Veröffentlichen über GitHub Pages
 
-1. Auf github.com ein neues Repository anlegen (z. B. `moina-website`).
-2. Im Ordner `D:\Dokumente\Webseite` einmalig:
+Repository: **`moinamoments/moinamoments.github.io`** (User-/Org-Pages, läuft auf Root-Ebene).
+
+Änderungen hochladen:
 
 ```bash
-git init -b main
-git add .
-git commit -m "MOINA Website"
-git remote add origin https://github.com/BENUTZERNAME/moina-website.git
-git push -u origin main
+git add . && git commit -m "..." && git push
 ```
 
-3. Im Repository: **Settings → Pages → Source: „Deploy from a branch“**,
-   Branch `main`, Ordner `/ (root)` → Save.
-4. Nach ein bis zwei Minuten ist die Seite erreichbar unter
-   `https://BENUTZERNAME.github.io/moina-website/`.
+Einmalig im Repository: **Settings → Pages → Source: „Deploy from a branch“**,
+Branch `main`, Ordner `/ (root)` → Save.
+Ohne eigene Domain ist die Seite dann unter `https://moinamoments.github.io/` erreichbar.
 
-Änderungen später einfach mit `git add . && git commit -m "..." && git push` hochladen.
+### Eigene Domain: moinamoments.de
 
-### Eigene Domain
+Die Seite ist vollständig auf **`moinamoments.de`** ausgerichtet (Canonical-URL,
+Social-Preview, strukturierte Daten, E-Mail-Adresse). Die Datei `CNAME` im Repo-Root
+teilt GitHub Pages die Domain mit – sie darf nicht gelöscht werden.
 
-Die Seite ist bereits auf **`moina.world`** ausgerichtet (Canonical-URL und Social-Preview).
+DNS beim Registrar (Namecheap → Domain List → Manage → **Advanced DNS**):
 
-1. Beim Domain-Anbieter die DNS-Einträge setzen:
-   - für `www.moina.world` einen **CNAME** auf `BENUTZERNAME.github.io`
-   - für `moina.world` (ohne www) vier **A-Records** auf
-     `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`
-2. Danach im Repository unter **Settings → Pages → Custom domain** `moina.world` eintragen.
-   GitHub legt die `CNAME`-Datei dann selbst an und stellt HTTPS bereit
-   („Enforce HTTPS“ anhaken, sobald es auswählbar ist).
+| Typ | Host | Wert |
+|---|---|---|
+| A Record | `@` | `185.199.108.153` |
+| A Record | `@` | `185.199.109.153` |
+| A Record | `@` | `185.199.110.153` |
+| A Record | `@` | `185.199.111.153` |
+| CNAME Record | `www` | `moinamoments.github.io.` |
 
-Solange die Domain noch nicht verbunden ist, läuft die Seite unter
-`https://BENUTZERNAME.github.io/moina-website/` – die Canonical-URL zeigt dann schon
-auf `moina.world`, was aber erst mit der Indexierung relevant wird.
+Danach im Repository unter **Settings → Pages → Custom domain** `moinamoments.de`
+eintragen und **„Enforce HTTPS"** anhaken, sobald es auswählbar ist. Das Zertifikat wird
+erst nach der DNS-Propagierung ausgestellt – das kann bis zu 24 Stunden dauern.
+
+Die Apex-Domain `moinamoments.de` ist die kanonische Adresse, `www` leitet dorthin um.
+
+### E-Mail info@moinamoments.de
+
+Impressum, Datenschutzerklärung und strukturierte Daten nennen `info@moinamoments.de`.
+**Das Postfach muss vor dem Start existieren** – für ein Impressum ist eine funktionierende
+Kontaktadresse Pflicht. Einfachster Weg bei Namecheap: **Advanced DNS → Mail Settings →
+„Email Forwarding"** und auf die private Adresse weiterleiten. Das setzt eigene
+MX-Records und berührt die A-Records oben nicht.
 
 ---
 
