@@ -37,7 +37,6 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 |---|---|
 | `assets/js/menu-data.js` | **Preise** der Menüitems (stehen alle auf „—“) |
 | `assets/js/main.js` (oben, `CONFIG`) | Genaues Eröffnungsdatum |
-| `index.html` – Abschnitt „Kontakt“ | Erreichbarkeit (steht auf „Mo – Fr, 10 – 18 Uhr“) |
 | `index.html` – JSON-LD im `<head>` | `priceRange`, sobald die Preise feststehen |
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
 
