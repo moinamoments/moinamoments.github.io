@@ -11,7 +11,7 @@ const CONFIG = {
   // Eröffnungstermin (Platzhalter). Format: Jahr, Monat-1, Tag, Stunde, Minute
   launchDate: new Date(2026, 8, 26, 11, 0, 0), // 26.09.2026, 11:00 Uhr
   // E-Mail, an die das Kontaktformular die Anfrage adressiert
-  contactEmail: "info@moina.world"
+  contactEmail: "info@moinamoments.de"
 };
 
 document.addEventListener("DOMContentLoaded", () => {

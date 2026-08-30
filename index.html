@@ -31,17 +31,83 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "FoodEstablishment",
-  "name": "MOINA – Golden Moments",
-  "slogan": "Golden Moments",
-  "description": "Mobiler Verkaufsanhänger für frische Crêpes, Mutzen, Churros, Kaffee, Tee und Kaltgetränke.",
-  "servesCuisine": ["Crêpes", "Churros", "Mutzen", "Kaffee"],
-  "areaServed": "Kiel und Umgebung",
-  "email": "info@moinamoments.de",
-  "telephone": "+4915567736496",
-  "url": "https://moinamoments.de/",
-  "image": "https://moinamoments.de/assets/img/og-image.jpg",
-  "sameAs": ["https://www.instagram.com/moina.goldenmoments/"]
+  "@graph": [
+    {
+      "@type": "FoodEstablishment",
+      "@id": "https://moinamoments.de/#business",
+      "name": "MOINA – Golden Moments",
+      "alternateName": "MOINA",
+      "slogan": "Golden Moments",
+      "description": "Mobiler Verkaufsanhänger aus Kiel für frische Crêpes, Mutzen, Churros, Kaffee, Tee und Kaltgetränke – buchbar für Feste, Feiern und Firmenevents in Kiel und Umgebung.",
+      "url": "https://moinamoments.de/",
+      "telephone": "+49 1556 7736496",
+      "email": "info@moinamoments.de",
+      "currenciesAccepted": "EUR",
+      "knowsLanguage": "de-DE",
+      "foundingDate": "2026-09-26",
+      "founder": {
+        "@type": "Person",
+        "name": "Mehmet Gelgel"
+      },
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://moinamoments.de/assets/img/logo-moina.jpg"
+      },
+      "image": [
+        "https://moinamoments.de/assets/img/og-image.jpg",
+        "https://moinamoments.de/assets/img/anhaenger-geoeffnet.jpg",
+        "https://moinamoments.de/assets/img/theke-auslage.jpg"
+      ],
+      "address": {
+        "@type": "PostalAddress",
+        "postalCode": "24145",
+        "addressLocality": "Kiel",
+        "addressRegion": "Schleswig-Holstein",
+        "addressCountry": "DE"
+      },
+      "areaServed": [
+        {
+          "@type": "City",
+          "name": "Kiel",
+          "sameAs": "https://www.wikidata.org/wiki/Q2910"
+        },
+        {
+          "@type": "GeoCircle",
+          "name": "Kiel und Umgebung",
+          "geoMidpoint": {
+            "@type": "GeoCoordinates",
+            "latitude": 54.3233,
+            "longitude": 10.1228
+          },
+          "geoRadius": "30000"
+        }
+      ],
+      "servesCuisine": ["Crêpes", "Churros", "Mutzen", "Kaffee"],
+      "hasMenu": "https://moinamoments.de/#karte",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer service",
+        "telephone": "+49 1556 7736496",
+        "email": "info@moinamoments.de",
+        "availableLanguage": "German",
+        "hoursAvailable": {
+          "@type": "OpeningHoursSpecification",
+          "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+          "opens": "10:00",
+          "closes": "18:00"
+        }
+      },
+      "sameAs": ["https://www.instagram.com/moina.goldenmoments/"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://moinamoments.de/#website",
+      "url": "https://moinamoments.de/",
+      "name": "MOINA – Golden Moments",
+      "inLanguage": "de-DE",
+      "publisher": { "@id": "https://moinamoments.de/#business" }
+    }
+  ]
 }
 </script>
 </head>
