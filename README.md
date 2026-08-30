@@ -104,13 +104,48 @@ erst nach der DNS-Propagierung ausgestellt – das kann bis zu 24 Stunden dauern
 
 Die Apex-Domain `moinamoments.de` ist die kanonische Adresse, `www` leitet dorthin um.
 
-### E-Mail info@moinamoments.de
+### E-Mail: info@moinamoments.de (Zoho Mail, EU-Rechenzentrum)
 
-Impressum, Datenschutzerklärung und strukturierte Daten nennen `info@moinamoments.de`.
-**Das Postfach muss vor dem Start existieren** – für ein Impressum ist eine funktionierende
-Kontaktadresse Pflicht. Einfachster Weg bei Namecheap: **Advanced DNS → Mail Settings →
-„Email Forwarding"** und auf die private Adresse weiterleiten. Das setzt eigene
-MX-Records und berührt die A-Records oben nicht.
+Das Postfach liegt bei **Zoho Mail EU**. Die dafür nötigen DNS-Einträge stehen bei
+Namecheap unter Advanced DNS und sind unabhängig von den A-Records der Website:
+
+| Typ | Host | Wert | Prio |
+|---|---|---|---|
+| MX | `@` | `mx.zoho.eu` | 10 |
+| MX | `@` | `mx2.zoho.eu` | 20 |
+| MX | `@` | `mx3.zoho.eu` | 50 |
+| TXT | `@` | `v=spf1 include:zohomail.eu ~all` | – |
+| TXT | `@` | `zoho-verification=zb85702319.zmverify.zoho.eu` | – |
+| TXT | `zmail._domainkey` | `v=DKIM1; k=rsa; p=…` | – |
+
+SPF und DKIM sind aktiv und geprüft.
+
+Wichtig: Die MX-Einträge dürfen nicht auf `@` mit den GitHub-A-Records verwechselt
+werden. Beide existieren parallel, MX steuert nur die Mailzustellung.
+
+#### DMARC – noch offen
+
+`_dmarc.moinamoments.de` existiert nicht. Ohne DMARC sagt die Domain den
+Empfängerservern nicht, was mit Mails passieren soll, die SPF und DKIM nicht
+bestehen – Spoofing im Namen der Domain bleibt so folgenlos, und die
+Zustellbarkeit bei Gmail und Outlook ist schlechter als nötig.
+
+Neuer TXT-Eintrag bei Namecheap, Host `_dmarc`:
+
+```
+v=DMARC1; p=none; rua=mailto:info@moinamoments.de; adkim=r; aspf=r
+```
+
+`p=none` heißt: nur beobachten, nichts blockieren. Das ist der richtige Start –
+zuerst zwei Wochen die Berichte ansehen, ob wirklich alle legitimen Mails SPF und
+DKIM bestehen. Danach auf die schärfere Stufe wechseln:
+
+```
+v=DMARC1; p=quarantine; rua=mailto:info@moinamoments.de; adkim=r; aspf=r
+```
+
+Die `rua`-Berichte kommen als XML-Anhänge und sind ohne Auswertungstool mühsam zu
+lesen. Wenn sie stören, kann der `rua`-Teil entfallen – der Schutz bleibt.
 
 ---
 
