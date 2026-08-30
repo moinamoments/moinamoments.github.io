@@ -391,22 +391,18 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
 .contact-list svg { width: 20px; height: 20px; flex: none; margin-top: .3rem; color: var(--gold); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .contact-list b { display: block; font-weight: 400; font-size: .68rem; letter-spacing: .2em; text-transform: uppercase; color: rgba(250,247,241,.5); margin-bottom: .15rem; }
 .contact-list a:hover { color: var(--gold-soft); }
-
-.form { display: grid; gap: 1.15rem; }
-.form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.15rem; }
-@media (max-width: 560px) { .form__row { grid-template-columns: 1fr; } }
-.field { display: grid; gap: .45rem; }
-.field label { font-size: .68rem; letter-spacing: .2em; text-transform: uppercase; color: rgba(250,247,241,.6); }
-.field input, .field textarea, .field select {
-  font: inherit; font-size: .95rem; color: var(--cream);
-  background: rgba(250,247,241,.05); border: 1px solid rgba(250,247,241,.16);
-  border-radius: var(--radius); padding: .85rem 1rem; transition: border-color .25s, background .25s;
+.contact-cta {
+  align-self: start; display: grid; gap: 1.25rem; justify-items: start;
+  padding: clamp(1.75rem, 4vw, 2.6rem);
+  border: 1px solid rgba(250,247,241,.16); border-radius: var(--radius);
+  background: rgba(250,247,241,.04);
 }
-.field textarea { resize: vertical; min-height: 130px; }
-.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--gold); background: rgba(250,247,241,.08); outline: none; }
-.field select option { background: var(--ink-2); color: var(--cream); }
-.form__hint { font-size: .78rem; color: rgba(250,247,241,.45); margin: 0; }
-.form__status { font-size: .88rem; color: var(--gold-soft); min-height: 1.2em; margin: 0; }
+.contact-cta h3 { margin: 0; font-size: clamp(1.3rem, 2.4vw, 1.6rem); font-weight: 400; }
+.contact-cta p { margin: 0; color: rgba(250,247,241,.72); }
+.contact-cta .btn svg { flex: none; }
+.contact-cta__alt { font-size: .88rem; color: rgba(250,247,241,.5); }
+.contact-cta__alt a { color: var(--gold-soft); }
+.contact-cta__alt a:hover { color: var(--gold); }
 
 /* --- Footer -------------------------------------------------------------- */
 .footer { background: var(--ink-2); color: rgba(250,247,241,.62); padding: clamp(3.5rem, 7vw, 5rem) 0 2rem; }

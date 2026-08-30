@@ -446,46 +446,24 @@
         </div>
       </div>
 
-      <form class="form reveal" data-contact-form novalidate>
-        <div class="form__row">
-          <div class="field">
-            <label for="f-name">Name</label>
-            <input id="f-name" name="name" type="text" required autocomplete="name">
-          </div>
-          <div class="field">
-            <label for="f-mail">E-Mail</label>
-            <input id="f-mail" name="email" type="email" required autocomplete="email">
-          </div>
-        </div>
-
-        <div class="form__row">
-          <div class="field">
-            <label for="f-anlass">Anlass</label>
-            <select id="f-anlass" name="anlass">
-              <option>Private Feier</option>
-              <option>Hochzeit</option>
-              <option>Firmenfeier</option>
-              <option>Markt / Stadtfest</option>
-              <option>Sonstiges</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="f-datum">Wunschtermin</label>
-            <input id="f-datum" name="datum" type="date">
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="f-text">Nachricht</label>
-          <textarea id="f-text" name="nachricht" placeholder="Ort, ungefähre Gästezahl und was ihr euch vorstellt." required></textarea>
-        </div>
-
-        <button class="btn btn--gold" type="submit">Anfrage senden</button>
-        <p class="form__status" data-form-status role="status"></p>
-        <p class="form__hint">
-          Die Anfrage wird als vorbereitete E-Mail in eurem Mailprogramm geöffnet.
+      <div class="contact-cta reveal">
+        <h3>Anfrage per E-Mail</h3>
+        <p>
+          Ein Klick öffnet euer E-Mail-Programm mit einer vorbereiteten Nachricht –
+          ihr müsst nur noch Anlass, Termin und Ort ergänzen.
         </p>
-      </form>
+
+        <a class="btn btn--gold"
+           href="mailto:info@moinamoments.de?subject=Anfrage%20%C3%BCber%20die%20Website&amp;body=Hallo%20MOINA-Team%2C%0A%0Aich%20m%C3%B6chte%20euch%20gern%20anfragen%3A%0A%0AAnlass%3A%20%0AWunschtermin%3A%20%0AOrt%3A%20%0AUngef%C3%A4hre%20G%C3%A4stezahl%3A%20%0A%0ANachricht%3A%0A%0A%0AViele%20Gr%C3%BC%C3%9Fe%0A">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M4 6l8 6 8-6"/></svg>
+          Anfrage schreiben
+        </a>
+
+        <p class="contact-cta__alt">
+          Lieber direkt? <a href="mailto:info@moinamoments.de">info@moinamoments.de</a>
+          oder <a href="tel:+4915567736496">+49 1556 7736 496</a>.
+        </p>
+      </div>
     </div>
   </div>
 </section>

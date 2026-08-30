@@ -1,6 +1,6 @@
 /* ==========================================================================
    MOINA – Golden Moments
-   Interaktionen: Navigation, Countdown, Speisekarte, Galerie, Formular
+   Interaktionen: Navigation, Countdown, Speisekarte, Galerie, Schema
    Keine Abhängigkeiten – reines Vanilla JS.
    ========================================================================== */
 
@@ -9,9 +9,7 @@
    -------------------------------------------------------------------------- */
 const CONFIG = {
   // Eröffnungstermin (Platzhalter). Format: Jahr, Monat-1, Tag, Stunde, Minute
-  launchDate: new Date(2026, 8, 26, 11, 0, 0), // 26.09.2026, 11:00 Uhr
-  // E-Mail, an die das Kontaktformular die Anfrage adressiert
-  contactEmail: "info@moinamoments.de"
+  launchDate: new Date(2026, 8, 26, 11, 0, 0) // 26.09.2026, 11:00 Uhr
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -19,8 +17,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initNav();
   initCountdown();
   initMenu();
+  initMenuSchema();
   initGallery();
-  initForm();
   initReveal();
   initYear();
 });
@@ -183,41 +181,85 @@ function initGallery() {
   });
 }
 
-/* --- Kontaktformular -----------------------------------------------------
-   GitHub Pages kann keine Formulare verarbeiten. Standard ist deshalb ein
-   vorbereiteter E-Mail-Entwurf (mailto). Für echten Versand ohne Server
-   z. B. Formspree nutzen: form-Element mit action="https://formspree.io/f/XXX"
-   und method="post" versehen – dann greift dieser Handler nicht mehr.
+/* --- Speisekarte als strukturierte Daten ---------------------------------
+   Erzeugt aus MENU (menu-data.js) ein Menu-Objekt nach schema.org und haengt
+   es als zweiten JSON-LD-Block an. Dadurch bleibt menu-data.js die einzige
+   Pflegestelle: sobald dort Preise stehen, erscheinen sie automatisch auch
+   in den strukturierten Daten.
+
+   Das statische JSON-LD in index.html bleibt fuer sich allein gueltig.
+   Hier wird nur ueber die @id des Betriebs nachtraeglich hasMenu ergaenzt -
+   JSON-LD fuehrt Knoten mit gleicher @id zusammen.
    ------------------------------------------------------------------------- */
-function initForm() {
-  const form = document.querySelector("[data-contact-form]");
-  if (!form || form.getAttribute("action")) return;
+const SITE_URL = "https://moinamoments.de/";
+const BUSINESS_ID = SITE_URL + "#business";
+const MENU_ID = SITE_URL + "#menu";
 
-  const status = form.querySelector("[data-form-status]");
+// "4,50 €" -> "4.50"   |   "—", "" oder fehlend -> null
+function parsePrice(value) {
+  if (!value) return null;
+  const match = String(value).replace(",", ".").match(/\d+(\.\d+)?/);
+  return match ? Number(match[0]).toFixed(2) : null;
+}
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    if (!form.reportValidity()) return;
+// Tags aus menu-data.js auf schema.org-Diaeten abbilden
+const DIETS = {
+  "vegan": "https://schema.org/VeganDiet",
+  "vegetarisch": "https://schema.org/VegetarianDiet"
+};
 
-    const data = new FormData(form);
-    const body = [
-      `Name: ${data.get("name") || "-"}`,
-      `E-Mail: ${data.get("email") || "-"}`,
-      `Anlass: ${data.get("anlass") || "-"}`,
-      `Wunschtermin: ${data.get("datum") || "-"}`,
-      "",
-      "Nachricht:",
-      data.get("nachricht") || "-"
-    ].join("\n");
+function buildMenuItem(item) {
+  const node = { "@type": "MenuItem", name: item.name };
+  if (item.desc) node.description = item.desc;
 
-    const href =
-      `mailto:${CONFIG.contactEmail}` +
-      `?subject=${encodeURIComponent("Anfrage über die Website – " + (data.get("anlass") || "Allgemein"))}` +
-      `&body=${encodeURIComponent(body)}`;
+  const diet = item.tag && DIETS[item.tag.toLowerCase()];
+  if (diet) node.suitableForDiet = diet;
 
-    window.location.href = href;
-    if (status) status.textContent = "Das E-Mail-Programm öffnet sich mit der fertigen Nachricht.";
-  });
+  const price = parsePrice(item.price);
+  if (price) {
+    node.offers = {
+      "@type": "Offer",
+      price: price,
+      priceCurrency: "EUR",
+      availability: "https://schema.org/InStock"
+    };
+  }
+  return node;
+}
+
+function initMenuSchema() {
+  if (typeof MENU === "undefined" || !Array.isArray(MENU) || !MENU.length) return;
+
+  const sections = MENU
+    .filter((section) => section.items && section.items.length)
+    .map((section) => ({
+      "@type": "MenuSection",
+      "@id": SITE_URL + "#menu-" + section.id,
+      name: section.label,
+      hasMenuItem: section.items.map(buildMenuItem)
+    }));
+
+  if (!sections.length) return;
+
+  const graph = {
+    "@context": "https://schema.org",
+    "@graph": [
+      { "@id": BUSINESS_ID, hasMenu: { "@id": MENU_ID } },
+      {
+        "@type": "Menu",
+        "@id": MENU_ID,
+        name: "Speisekarte – MOINA – Golden Moments",
+        url: SITE_URL + "#karte",
+        inLanguage: "de-DE",
+        hasMenuSection: sections
+      }
+    ]
+  };
+
+  const script = document.createElement("script");
+  script.type = "application/ld+json";
+  script.textContent = JSON.stringify(graph, null, 2);
+  document.head.appendChild(script);
 }
 
 /* --- Einblenden beim Scrollen -------------------------------------------- */

@@ -38,6 +38,7 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 | `assets/js/menu-data.js` | **Preise** der Menüitems (stehen alle auf „—“) |
 | `assets/js/main.js` (oben, `CONFIG`) | Genaues Eröffnungsdatum |
 | `index.html` – Abschnitt „Kontakt“ | Erreichbarkeit (steht auf „Mo – Fr, 10 – 18 Uhr“) |
+| `index.html` – JSON-LD im `<head>` | `priceRange`, sobald die Preise feststehen |
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
 
 Kontaktdaten, Impressum und Datenschutzerklärung sind vollständig ausgefüllt
@@ -113,19 +114,45 @@ MX-Records und berührt die A-Records oben nicht.
 
 ---
 
-## Kontaktformular
+## Kontakt
 
-GitHub Pages kann keine Formulare verarbeiten. Aktuell öffnet das Formular deshalb eine
-fertig ausgefüllte E-Mail im Mailprogramm des Besuchers.
+Es gibt **kein Formular** mehr. Der Kontaktbereich in `index.html` enthält einen
+`mailto:`-Button, der das Standard-Mailprogramm des Besuchers mit vorbereitetem
+Betreff und Textgerüst (Anlass, Wunschtermin, Ort, Gästezahl) öffnet.
 
-Für echten Versand ohne eigenen Server eignet sich z. B. [Formspree](https://formspree.io):
-im `<form>`-Tag in `index.html` einfach ergänzen –
+Das braucht kein JavaScript und keinen Server – funktioniert also auch auf GitHub Pages
+zuverlässig. Empfängeradresse und Textvorlage stehen direkt im `href` des Links
+(Abschnitt `contact-cta` in `index.html`); Sonderzeichen dort sind URL-kodiert
+(`%20` Leerzeichen, `%0A` Zeilenumbruch, `%C3%BC` = ü).
 
-```html
-<form class="form" action="https://formspree.io/f/DEINE-ID" method="post">
-```
+---
 
-Sobald ein `action` gesetzt ist, schaltet sich der E-Mail-Fallback automatisch ab.
+## Strukturierte Daten (SEO)
+
+Zwei Ebenen, damit `menu-data.js` die einzige Pflegestelle für die Karte bleibt:
+
+**Statisch in `index.html`** – ein `@graph` mit `FoodEstablishment` und `WebSite`:
+Name, Beschreibung, Telefon, E-Mail, Logo, Bilder, Gründer, Adresse auf Ortsebene
+(bewusst ohne Straße), `areaServed` als `City` Kiel plus `GeoCircle` mit 30 km Radius
+und ein `contactPoint` mit der telefonischen Erreichbarkeit.
+
+**Dynamisch aus `assets/js/main.js`** – `initMenuSchema()` baut aus `MENU` ein
+`Menu`-Objekt mit allen Kategorien und Gerichten und hängt es als zweiten
+JSON-LD-Block an. Preise werden nur ausgegeben, wenn in `menu-data.js` welche
+stehen; `—` und leere Werte werden übersprungen. Die Tags „Vegan“ und
+„Vegetarisch“ werden automatisch zu `suitableForDiet`.
+
+Sobald du die Preise einträgst, erscheinen sie also ohne weiteres Zutun in den
+strukturierten Daten.
+
+> **Noch offen:** `priceRange` im `FoodEstablishment` fehlt bewusst, solange keine
+> Preise feststehen. Ebenso `openingHoursSpecification` – die „Mo – Fr, 10 – 18 Uhr“
+> sind die telefonische Erreichbarkeit, keine Verkaufszeiten. Wenn es feste
+> Standzeiten gibt, gehören sie als `openingHoursSpecification` ergänzt.
+
+Prüfen lässt sich das Ergebnis mit dem
+[Rich Results Test](https://search.google.com/test/rich-results) – dort die URL
+`https://moinamoments.de/` eingeben.
 
 ---
 
