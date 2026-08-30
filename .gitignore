@@ -1,0 +1,6 @@
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# lokale Vorschau-Konfiguration (verweist auf einen temporaeren Pfad)
+.claude/
