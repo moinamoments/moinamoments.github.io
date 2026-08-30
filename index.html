@@ -477,7 +477,8 @@
 <!-- Lightbox -->
 <div class="lightbox" data-lightbox role="dialog" aria-modal="true" aria-label="Bildansicht">
   <button class="lightbox__close" type="button" aria-label="Schließen">&times;</button>
-  <img src="" alt="">
+  <!-- ohne src: die Quelle wird erst beim Öffnen gesetzt (spart eine leere Anfrage) -->
+  <img alt="">
 </div>
 
 <script src="assets/js/menu-data.js"></script>
