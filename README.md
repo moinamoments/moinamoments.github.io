@@ -35,10 +35,11 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 
 | Wo | Was |
 |---|---|
-| `assets/js/menu-data.js` | **Preise** der Menüitems (stehen alle auf „—“) |
 | `assets/js/main.js` (oben, `CONFIG`) | Genaues Eröffnungsdatum |
-| `index.html` – JSON-LD im `<head>` | `priceRange`, sobald die Preise feststehen |
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
+
+Die Speisekarte ist vollständig: 30 Positionen mit Preisen (Stand: August 2026).
+Preisspanne 0,70 € bis 9,00 €, hinterlegt als `priceRange` im JSON-LD.
 
 Kontaktdaten, Impressum und Datenschutzerklärung sind vollständig ausgefüllt
 (Mehmet Gelgel, Kiel, `info@moinamoments.de`, Kleinunternehmer nach § 19 UStG).
@@ -179,10 +180,13 @@ stehen; `—` und leere Werte werden übersprungen. Die Tags „Vegan“ und
 Sobald du die Preise einträgst, erscheinen sie also ohne weiteres Zutun in den
 strukturierten Daten.
 
-> **Noch offen:** `priceRange` im `FoodEstablishment` fehlt bewusst, solange keine
-> Preise feststehen. Ebenso `openingHoursSpecification` – die „Mo – Fr, 10 – 18 Uhr“
-> sind die telefonische Erreichbarkeit, keine Verkaufszeiten. Wenn es feste
-> Standzeiten gibt, gehören sie als `openingHoursSpecification` ergänzt.
+> **Noch offen:** `openingHoursSpecification` – die angegebenen Zeiten sind die
+> telefonische Erreichbarkeit, keine Verkaufszeiten. Wenn es feste Standzeiten
+> gibt, gehören sie als `openingHoursSpecification` ergänzt.
+>
+> **Preise ändern:** nur in `menu-data.js`. Der `priceRange` im `<head>` von
+> `index.html` muss dabei von Hand mitgezogen werden, wenn sich die günstigste
+> oder teuerste Position ändert.
 
 Prüfen lässt sich das Ergebnis mit dem
 [Rich Results Test](https://search.google.com/test/rich-results) – dort die URL
