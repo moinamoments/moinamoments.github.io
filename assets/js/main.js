@@ -115,7 +115,12 @@ function initMenu() {
   if (!tabsEl || !gridEl || typeof MENU === "undefined") return;
 
   const render = (category) => {
-    gridEl.innerHTML = category.items
+    // Optionaler Kategorie-Hinweis (z. B. "nur an ausgewaehlten Standorten")
+    const note = category.note
+      ? `<p class="menu-hint">${category.note}</p>`
+      : "";
+
+    gridEl.innerHTML = note + category.items
       .map((item) => {
         const tag = item.tag ? `<span class="tag">${item.tag}</span>` : "";
         const price = item.price ? item.price : PRICE_PLACEHOLDER;

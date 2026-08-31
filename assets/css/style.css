@@ -524,3 +524,30 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
   color: var(--gold-deep); font-weight: 400; margin-bottom: .35rem;
 }
 .story-nav span { font-family: var(--font-display); font-size: 1.45rem; }
+
+/* --- Hinweisbox (z. B. wechselndes Angebot) ------------------------------- */
+.notice {
+  display: flex; gap: 1rem; align-items: flex-start; text-align: left;
+  max-width: 42rem; margin: 1.75rem auto 0;
+  padding: 1.3rem 1.6rem;
+  border: 1px solid var(--line-gold); border-radius: var(--radius);
+  background: rgba(201, 162, 39, .07);
+}
+.notice svg {
+  width: 22px; height: 22px; flex: none; margin-top: .2rem; color: var(--gold);
+  fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round;
+}
+.notice p { margin: 0; font-size: .95rem; color: var(--text-soft); }
+.notice strong { color: var(--gold-deep); font-weight: 400; }
+.notice a { color: var(--gold-deep); text-decoration: underline; text-underline-offset: 3px; }
+.section--dark .notice p { color: rgba(250, 247, 241, .78); }
+.section--dark .notice strong,
+.section--dark .notice a { color: var(--gold-soft); }
+
+/* Hinweis innerhalb einer Speisekarten-Kategorie */
+.menu-hint {
+  grid-column: 1 / -1;
+  margin: 0 0 1.25rem; padding: .5rem 0 .5rem 1rem;
+  border-left: 2px solid var(--line-gold);
+  font-size: .88rem; color: var(--gold-soft);
+}

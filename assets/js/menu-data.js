@@ -38,6 +38,7 @@ const MENU = [
   {
     id: "mutzen",
     label: "Mutzen",
+    note: "Churros oder Mutzen – wir wechseln je nach Standort ab. Was heute dabei ist, steht auf Instagram.",
     items: [
       { name: "Mutzen klassisch",     desc: "Frisch ausgebacken, mit Puderzucker bestäubt.", tag: "Klassiker" },
       { name: "Mutzen Zimt-Zucker",   desc: "Noch warm in Zimt-Zucker gewendet." },
@@ -48,6 +49,7 @@ const MENU = [
   {
     id: "churros",
     label: "Churros",
+    note: "Churros oder Mutzen – wir wechseln je nach Standort ab. Was heute dabei ist, steht auf Instagram.",
     items: [
       { name: "Churros klassisch",    desc: "Knusprig gebacken, in Zimt-Zucker gewälzt.", tag: "Klassiker" },
       { name: "Churros mit Schokosauce", desc: "Mit warmer Schokolade zum Dippen.", tag: "Beliebt" },
