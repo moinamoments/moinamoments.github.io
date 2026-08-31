@@ -18,11 +18,11 @@ const MENU = [
     id: "crepes-suess",
     label: "Crêpes süß",
     items: [
-      { name: "Zucker & Zimt",        desc: "Der Klassiker – hauchdünn, frisch von der Platte.", tag: "Klassiker" },
-      { name: "Nuss-Nougat",          desc: "Cremiger Nuss-Nougat-Aufstrich, warm verstrichen." },
+      { name: "Zimt & Zucker",        desc: "Der Klassiker – hauchdünn, frisch von der Platte.", tag: "Klassiker" },
+      { name: "Nutella",              desc: "Warm verstrichen, bis sie glänzt." },
       { name: "Joghurette",           desc: "Geschmolzene Joghurette – fruchtig und cremig." },
       { name: "Kinderriegel",         desc: "Geschmolzener Kinderriegel, warm verstrichen.", tag: "Beliebt" },
-      { name: "Karamell & Meersalz",  desc: "Salzkaramell, geröstete Nüsse, Sahnehaube." },
+      { name: "Karamell & Meersalz",  desc: "Salzkaramell mit Sahnehaube." },
       { name: "Lotus Biscoff",        desc: "Cremiger Lotus-Biscoff-Aufstrich, warm verstrichen, mit zerbröseltem Karamellkeks.", tag: "Neu" }
     ]
   },
@@ -61,8 +61,8 @@ const MENU = [
     id: "toppings",
     label: "Toppings",
     items: [
+      { name: "Geröstete Haselnüsse", desc: "Frisch geröstet und grob gehackt." },
       { name: "Krokant",              desc: "Knuspriger Nusskrokant." },
-      { name: "Haselnussstücke",      desc: "Geröstete Haselnussstücke." },
       { name: "Schokostreusel",       desc: "Feine Schokostreusel." }
     ]
   },
