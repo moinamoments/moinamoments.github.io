@@ -85,9 +85,9 @@ const MENU = [
     id: "kalt",
     label: "Kaltgetränke",
     items: [
-      { name: "Hausgemachte Limonade",desc: "Wechselnde Sorten der Saison.",             price: "3,00 €", tag: "Saison" },
-      { name: "Apfelschorle",         desc: "Spritzig, nicht zu süß.",                   price: "2,50 €" },
-      { name: "Softdrinks",           desc: "Auswahl klassischer Erfrischungsgetränke.", price: "3,00 €" },
+      { name: "Hausgemachte Limonade",desc: "Wechselnde Sorten der Saison.",             price: "3,50 €", tag: "Saison" },
+      { name: "Apfelschorle",         desc: "Spritzig, nicht zu süß.",                   price: "3,00 €" },
+      { name: "Softdrinks",           desc: "Auswahl klassischer Erfrischungsgetränke.", price: "3,50 €" },
       { name: "Wasser still / medium",desc: "0,33 l und 0,5 l.",                         price: "2,00 €" }
     ]
   }
