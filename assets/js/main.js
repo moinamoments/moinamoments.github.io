@@ -15,7 +15,7 @@ const CONFIG = {
   // Hier NUR den Code eintragen, den du bei der Anmeldung auf goatcounter.com
   // gewählt hast: aus "https://beispiel.goatcounter.com" wird also "beispiel".
   // Solange das Feld leer ist, wird kein Skript geladen und nichts gezählt.
-  goatCounterCode: ""
+  goatCounterCode: "moinamoments"
 };
 
 document.addEventListener("DOMContentLoaded", () => {
