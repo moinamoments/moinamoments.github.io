@@ -36,6 +36,7 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 | Wo | Was |
 |---|---|
 | `assets/js/main.js` (oben, `CONFIG`) | Genaues Eröffnungsdatum |
+| `assets/js/main.js` (oben, `CONFIG`) | `goatCounterCode` – siehe unten |
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
 
 Die Speisekarte ist vollständig: 30 Positionen mit Preisen (Stand: August 2026).
@@ -159,6 +160,39 @@ Das braucht kein JavaScript und keinen Server – funktioniert also auch auf Git
 zuverlässig. Empfängeradresse und Textvorlage stehen direkt im `href` des Links
 (Abschnitt `contact-cta` in `index.html`); Sonderzeichen dort sind URL-kodiert
 (`%20` Leerzeichen, `%0A` Zeilenumbruch, `%C3%BC` = ü).
+
+---
+
+## Besucherzählung: GoatCounter
+
+Eingebunden, aber **noch nicht aktiv**. Zum Einschalten:
+
+1. Auf [goatcounter.com](https://www.goatcounter.com) ein Konto anlegen und einen Code
+   wählen, z. B. `moina` → die Auswertung liegt dann auf `https://moina.goatcounter.com`.
+2. In `assets/js/main.js` ganz oben eintragen:
+
+```js
+goatCounterCode: "moina"
+```
+
+3. Committen und pushen. Fertig – kein weiterer Code nötig.
+
+Solange das Feld leer ist, wird das Zählskript gar nicht geladen; die Seite stellt dann
+außer den Google Fonts keine Anfragen an Dritte.
+
+**Warum GoatCounter passt:** keine Cookies, keine gespeicherten IP-Adressen, kein
+Cookie-Banner nötig. Das Skript ist rund 3 KB groß und wird asynchron geladen. Sendet der
+Browser „Do Not Track“, lädt es gar nicht erst.
+
+**Zwei Punkte zum Prüfen:**
+
+* Der kostenlose Tarif von GoatCounter ist für private Nutzung gedacht. Für einen
+  Gewerbebetrieb bitte die aktuellen Nutzungsbedingungen ansehen – gegebenenfalls ist ein
+  kostenpflichtiger Tarif fällig oder eine Spende erwartet.
+* Für eine Auftragsverarbeitung nach Art. 28 DSGVO wird üblicherweise ein AV-Vertrag
+  benötigt. GoatCounter stellt dazu Informationen bereit; das gehört einmal geklärt.
+
+Abschnitt 4 der Datenschutzerklärung beschreibt den Dienst bereits vollständig.
 
 ---
 

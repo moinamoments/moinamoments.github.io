@@ -9,7 +9,13 @@
    -------------------------------------------------------------------------- */
 const CONFIG = {
   // Eröffnungstermin (Platzhalter). Format: Jahr, Monat-1, Tag, Stunde, Minute
-  launchDate: new Date(2026, 8, 26, 11, 0, 0) // 26.09.2026, 11:00 Uhr
+  launchDate: new Date(2026, 8, 26, 11, 0, 0), // 26.09.2026, 11:00 Uhr
+
+  // GoatCounter – datenschutzfreundliche Reichweitenmessung ohne Cookies.
+  // Hier NUR den Code eintragen, den du bei der Anmeldung auf goatcounter.com
+  // gewählt hast: aus "https://beispiel.goatcounter.com" wird also "beispiel".
+  // Solange das Feld leer ist, wird kein Skript geladen und nichts gezählt.
+  goatCounterCode: ""
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -21,7 +27,30 @@ document.addEventListener("DOMContentLoaded", () => {
   initGallery();
   initReveal();
   initYear();
+  initAnalytics();
 });
+
+/* --- GoatCounter -----------------------------------------------------------
+   Laedt das Zaehlskript nur, wenn in CONFIG ein Code hinterlegt ist. Ohne
+   Code passiert gar nichts – die Seite bleibt dann vollstaendig frei von
+   Drittanbieter-Anfragen.
+
+   GoatCounter setzt keine Cookies, speichert keine IP-Adressen und zaehlt
+   Aufrufe von localhost von sich aus nicht mit.
+   -------------------------------------------------------------------------- */
+function initAnalytics() {
+  const code = (CONFIG.goatCounterCode || "").trim();
+  if (!code) return;
+
+  // "Do Not Track" des Browsers respektieren
+  if (navigator.doNotTrack === "1" || window.doNotTrack === "1") return;
+
+  const s = document.createElement("script");
+  s.async = true;
+  s.src = "https://gc.zgo.at/count.js";
+  s.setAttribute("data-goatcounter", `https://${code}.goatcounter.com/count`);
+  document.head.appendChild(s);
+}
 
 /* --- Header: Hintergrund beim Scrollen ----------------------------------- */
 function initHeader() {
