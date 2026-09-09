@@ -551,3 +551,11 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
   border-left: 2px solid var(--line-gold);
   font-size: .88rem; color: var(--gold-soft);
 }
+
+/* Fussnote unter der Speisekarte (Preisvorbehalt) */
+.menu-footnote {
+  max-width: 44rem; margin: 2.5rem auto 0; text-align: center;
+  font-size: .85rem; line-height: 1.6;
+  color: rgba(250, 247, 241, .5);
+  padding-top: 1.5rem; border-top: 1px solid rgba(250, 247, 241, .12);
+}
