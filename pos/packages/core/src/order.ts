@@ -13,9 +13,19 @@
  * ist am Marktstand unbrauchbar, und der Gesetzgeber verlangt das auch nicht.
  */
 
-import { type Cart, type CartOptions, type CartTotals, cartTotals } from "./cart.ts";
+import { type Cart, type CartLine, type CartOptions, type CartTotals, cartTotals, effectiveUnitPrice } from "./cart.ts";
 import type { Clock, IdFactory } from "./clock.ts";
-import { type Cents, cents, formatDecimal, sumCents } from "./money.ts";
+import {
+  ONE,
+  type Cents,
+  type Quantity,
+  cents,
+  formatDecimal,
+  formatQuantity,
+  lineTotal,
+  roundHalfUp,
+  sumCents,
+} from "./money.ts";
 import type {
   Device,
   Id,
@@ -29,7 +39,7 @@ import type {
   TseTransactionRecord,
   User,
 } from "./model.ts";
-import { kassenbelegTaxFields } from "./tax.ts";
+import { kassenbelegTaxFields, type TaxKey } from "./tax.ts";
 import { TseError, type TseClient, type TseResponse } from "./tse/types.ts";
 import { encodeProcessData } from "./tse/types.ts";
 
@@ -347,32 +357,167 @@ export function isTseSecured(order: Pick<Order, "tse">): boolean {
  * steht in `voidsOrderId`.
  */
 export function buildVoidCart(order: Order): Cart {
+  return buildPartialVoidCart(
+    order,
+    order.lines.map((line) => ({ lineId: line.id, quantity: line.quantity })),
+  );
+}
+
+/** Welche Position in welcher Menge zurueckgenommen wird. */
+export interface VoidSelection {
+  readonly lineId: Id;
+  /** Zurueckzunehmende Menge, positiv. */
+  readonly quantity: Quantity;
+}
+
+/**
+ * Teilstorno: einzelne Positionen oder Teilmengen zurueckgeben.
+ *
+ * Der haeufigere Fall als der Vollstorno. Der Kunde nimmt eine Flasche wieder
+ * mit, eine Portion war falsch, von drei Crepes ist einer misslungen - dann
+ * wird genau das zurueckgenommen und ausgezahlt, nicht der ganze Beleg
+ * aufgeloest.
+ *
+ * Was dabei stimmen muss und hier stimmt:
+ *
+ *   - **Der Steuersatz je Position.** Ein Beleg mit 7 % und 19 % darf nicht
+ *     pauschal mit einem Mischsatz erstattet werden; jede Position traegt
+ *     ihren eigenen.
+ *   - **Rabatte anteilig.** War die Position rabattiert, wird auch nur der
+ *     tatsaechlich gezahlte Anteil erstattet - sonst bekommt der Kunde mehr
+ *     zurueck, als er gegeben hat.
+ *   - **Pfand geht mit.** Wer die Flasche zurueckbringt, bekommt das Pfand
+ *     mit; die Pfandposition haengt an der Warenposition und wird im selben
+ *     Verhaeltnis zurueckgenommen.
+ *
+ * Gerechnet wird ueber den anteiligen Positionswert, nicht ueber den
+ * Einzelpreis: nur so hebt sich der Teilstorno bei voller Menge auf den Cent
+ * genau gegen das Original auf.
+ */
+export function buildPartialVoidCart(order: Order, selections: readonly VoidSelection[]): Cart {
   if (order.state !== "PAID") throw new OrderError("Nur bezahlte Belege koennen storniert werden");
-  return {
-    tenantId: order.tenantId,
-    serviceMode: order.serviceMode,
-    orderDiscount: 0,
-    lines: order.lines.map((line) => ({
+  if (selections.length === 0) throw new OrderError("Es ist keine Position zum Storno ausgewaehlt");
+
+  const byLineId = new Map<Id, typeof order.lines[number]>();
+  for (const line of order.lines) byLineId.set(line.id, line);
+
+  // Mengen je Position zusammenfassen, damit zweimal dieselbe Position nicht
+  // mehr zurueckgibt als verkauft wurde.
+  const wanted = new Map<Id, Quantity>();
+  for (const selection of selections) {
+    const line = byLineId.get(selection.lineId);
+    if (!line) throw new OrderError(`Position ${selection.lineId} gehoert nicht zu Beleg ${order.receiptNumber}`);
+    if (selection.quantity <= 0) throw new OrderError(`Die Stornomenge fuer "${line.name}" muss positiv sein`);
+    const total = (wanted.get(selection.lineId) ?? 0) + selection.quantity;
+    if (total > Math.abs(line.quantity)) {
+      throw new OrderError(
+        `Von "${line.name}" wurden ${formatQuantity(Math.abs(line.quantity))} verkauft - mehr kann nicht zurueckgenommen werden`,
+      );
+    }
+    wanted.set(selection.lineId, total);
+  }
+
+  // Pfandpositionen folgen ihrer Warenposition im selben Verhaeltnis.
+  for (const line of order.lines) {
+    if (line.depositForLineId == null) continue;
+    const parentWanted = wanted.get(line.depositForLineId);
+    if (parentWanted == null || wanted.has(line.id)) continue;
+    const parent = byLineId.get(line.depositForLineId);
+    if (!parent || parent.quantity === 0) continue;
+    const share = parentWanted / Math.abs(parent.quantity);
+    const depositQuantity = Math.round(Math.abs(line.quantity) * share);
+    if (depositQuantity > 0) wanted.set(line.id, depositQuantity);
+  }
+
+  const lines: CartLine[] = [];
+  for (const line of order.lines) {
+    const quantity = wanted.get(line.id);
+    if (quantity == null || quantity === 0) continue;
+
+    const full = Math.abs(line.quantity);
+    // Anteiliger Positionswert. Bei voller Menge ist das genau `line.gross`,
+    // sodass sich Beleg und Storno exakt aufheben.
+    const share = quantity === full ? line.gross : roundHalfUp((line.gross * quantity) / full);
+    const signedQuantity = line.quantity >= 0 ? -quantity : quantity;
+
+    const storno: CartLine = {
       id: `${line.id}-storno`,
       productId: line.productId,
       name: line.name,
-      quantity: -line.quantity,
-      // Einzelpreis und Menge bleiben die des Originals, nur das Vorzeichen
-      // der Menge kippt. Rabatte werden zusammengefasst uebernommen: bei
-      // negativer Menge rechnet die Summenbildung den Rabatt wieder hinzu,
-      // sodass Beleg und Storno sich auf den Cent genau aufheben. Den Preis
-      // aus dem Positionswert zurueckzurechnen waere rundungsanfaellig.
+      quantity: signedQuantity,
       unitPrice: line.unitPrice,
       taxKey: line.taxKey,
       taxKeyDineIn: null,
       modifiers: line.modifiers,
-      discount: line.discount + line.allocatedDiscount,
+      // Der Rabatt traegt die Differenz zwischen dem rohen Positionswert und
+      // dem tatsaechlich gezahlten Anteil. Bei negativer Menge rechnet die
+      // Summenbildung ihn wieder hinzu - so trifft die Zeile genau den
+      // anteiligen Wert, ohne den Einzelpreis zurueckzurechnen (das waere
+      // rundungsanfaellig und wuerde Beleg und Storno auseinanderlaufen
+      // lassen).
+      discount: 0,
       businessCaseType: line.businessCaseType,
       note: `Storno zu Beleg ${order.receiptNumber}`,
       // Die Pfandpositionen des Originals stehen schon als eigene Zeilen im
       // Beleg. Wuerde der Storno sie erneut ableiten, stuende das Pfand
       // doppelt drauf - der Kunde bekaeme zu viel zurueck.
       waiveDeposit: true,
-    })),
+    };
+
+    const raw = lineTotal(effectiveUnitPrice(storno), signedQuantity);
+    // raw ist negativ (Rueckgabe), das Ziel ebenfalls; die Differenz ist der
+    // Rabatt, der die Zeile auf den gezahlten Anteil bringt.
+    lines.push({ ...storno, discount: Math.abs(raw) - Math.abs(share) });
+  }
+
+  if (lines.length === 0) throw new OrderError("Es ist keine Position zum Storno ausgewaehlt");
+
+  return {
+    tenantId: order.tenantId,
+    serviceMode: order.serviceMode,
+    orderDiscount: 0,
+    lines,
+  };
+}
+
+/**
+ * Freie Auszahlung ohne Bezug auf eine Position.
+ *
+ * Die Rueckfallebene fuer Faelle, die sich keiner Position zuordnen lassen -
+ * eine Kulanzgutschrift, ein falsch abgerechneter Betrag. Der Steuersatz muss
+ * dabei **angegeben werden**: ohne ihn waere die Umsatzsteuer der Gutschrift
+ * nicht bestimmbar, und eine Kasse, die den Satz raet, produziert eine falsche
+ * Voranmeldung. Der Bezug auf den Ursprungsbeleg gehoert in `note`.
+ */
+export function buildRefundCart(
+  order: Pick<Order, "tenantId" | "serviceMode" | "receiptNumber">,
+  amount: Cents,
+  taxKey: TaxKey,
+  options: { readonly id: Id; readonly reason: string },
+): Cart {
+  if (amount <= 0) throw new OrderError("Der Auszahlungsbetrag muss positiv angegeben werden");
+  const reason = options.reason.trim();
+  if (reason === "") throw new OrderError("Eine Auszahlung ohne Grund wird nicht gebucht");
+
+  return {
+    tenantId: order.tenantId,
+    serviceMode: order.serviceMode,
+    orderDiscount: 0,
+    lines: [
+      {
+        id: options.id,
+        productId: null,
+        name: `Auszahlung: ${reason}`,
+        quantity: ONE,
+        unitPrice: -amount,
+        taxKey,
+        taxKeyDineIn: null,
+        modifiers: [],
+        discount: 0,
+        businessCaseType: "Umsatz",
+        note: `Bezug: Beleg ${order.receiptNumber}`,
+        waiveDeposit: true,
+      },
+    ],
   };
 }

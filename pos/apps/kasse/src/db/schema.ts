@@ -126,7 +126,7 @@ export const MIGRATIONS: readonly Migration[] = [
         -- Ein Bild ohne Lizenzangabe darf nicht in den Stamm gelangen: die
         -- Namensnennung ist bei CC-Lizenzen Pflicht, und nachtraeglich
         -- herausfinden, woher ein Bild kam, kann niemand.
-        CHECK (image_url IS NULL OR image_license IS NOT NULL)
+        CHECK (image_url IS NULL OR (image_license IS NOT NULL AND TRIM(image_license) <> ''))
       )`,
 
       // Pfandzuordnung als eigene Tabelle: ein Artikel kann mehrere

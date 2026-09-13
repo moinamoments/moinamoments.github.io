@@ -91,6 +91,28 @@ export function enqueue(
 }
 
 /**
+ * Zwei Zeitstempel vergleichen.
+ *
+ * **Nicht** als Zeichenkette: unsere Zeitstempel tragen den Offset der
+ * Ortszeit, und `2026-09-26T09:00:00+02:00` liegt real *vor*
+ * `2026-09-26T09:00:00+00:00`, als Text aber dahinter. Genau das passiert,
+ * wenn die Kasse ihre Zeit in Ortszeit fuehrt und der Backoff in UTC rechnet -
+ * oder nach der Sommerzeitumstellung. Ein Eintrag waere dann faellig, wenn er
+ * es nicht ist, oder umgekehrt.
+ */
+function atOrBefore(a: string, b: string): boolean {
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  if (Number.isNaN(left) || Number.isNaN(right)) {
+    // Unlesbarer Zeitstempel: lieber senden als liegen lassen. Ein Beleg, der
+    // wegen eines kaputten Zeitstempels nie uebertragen wird, faellt niemandem
+    // auf.
+    return true;
+  }
+  return left <= right;
+}
+
+/**
  * Die naechsten faelligen Eintraege, in Entstehungsreihenfolge.
  *
  * Ein Eintrag mit Wartezeit blockiert die Warteschlange *nicht*: haengt ein
@@ -98,7 +120,7 @@ export function enqueue(
  * Innerhalb einer Art bleibt die Reihenfolge erhalten.
  */
 export function due(state: OutboxState, now: string, limit = 25): readonly OutboxEntry[] {
-  return state.entries.filter((entry) => entry.nextAttemptAt <= now).slice(0, limit);
+  return state.entries.filter((entry) => atOrBefore(entry.nextAttemptAt, now)).slice(0, limit);
 }
 
 /** Erfolgreich uebertragenen Eintrag entfernen. */

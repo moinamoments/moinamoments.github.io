@@ -8,6 +8,7 @@ import type { Device, Order, Product, Store, Tenant } from "./model.ts";
 import { MockTse } from "./tse/mock.ts";
 import { beginTransaction, buildVoidCart, finishTransaction, type TransactionContext } from "./order.ts";
 import { ClosingError, DENOMINATIONS, buildClosing, countCash, renderClosingText } from "./closing.ts";
+import { buildCashMovement, openDay } from "./cashbook.ts";
 
 const tenant: Tenant = {
   id: "t1", name: "MOINA", legalName: "Mehmet Gelgel", street: "Musterweg 1", postalCode: "24103", city: "Kiel",
@@ -202,6 +203,46 @@ test("leerer Abschluss ist moeglich - ein Tag ohne Verkauf ist auch ein Tag", ()
   assert.equal(report.expectedCash, 5000);
   assert.equal(report.cashDifference, 0);
   assert.equal(report.firstReceiptNumber, null);
+});
+
+test("Kassenbewegungen gehen in den Soll-Kassenbestand ein", async () => {
+  const { orders } = await makeOrders();
+  const cashMovements = [
+    openDay({ id: "m0", tenantId: "t1", storeId: "s1", deviceId: "d1", userId: "u1",
+      createdAt: "2026-09-26T07:30:00+02:00", cashCount: [{ denomination: 5000, count: 1 }] }),
+    buildCashMovement({ id: "m1", tenantId: "t1", storeId: "s1", deviceId: "d1", userId: "u1",
+      createdAt: "2026-09-26T12:00:00+02:00", type: "WITHDRAWAL", amount: 2000, reason: "Einkauf Markt" }),
+  ];
+
+  const report = buildClosing({
+    tenant, store, device, userId: "u1", closingId: "z1", number: 1,
+    from: "a", to: "b", createdAt: "c", orders, cashMovements,
+  });
+
+  // Anfangsbestand 50,00 aus der Eroeffnung, Barumsatz 6,00, Entnahme -20,00.
+  assert.equal(report.closing.openingCash, 5000);
+  assert.equal(report.expectedCash, 5000 + 600 - 2000);
+  assert.equal(report.cashbook.withdrawals, -2000);
+  assert.equal(report.cashMovements.length, 1, "die Eroeffnung steht separat");
+
+  const text = renderClosingText(report);
+  assert.ok(text.includes("Entnahme"), text);
+});
+
+test("eine Entnahme am Mittag ist am Abend kein Fehlbetrag", async () => {
+  const { orders } = await makeOrders();
+  const cashMovements = [
+    buildCashMovement({ id: "m1", tenantId: "t1", storeId: "s1", deviceId: "d1", userId: "u1",
+      createdAt: "2026-09-26T12:00:00+02:00", type: "WITHDRAWAL", amount: 2000, reason: "Bank" }),
+  ];
+  const report = buildClosing({
+    tenant, store, device, userId: "u1", closingId: "z1", number: 1,
+    from: "a", to: "b", createdAt: "c", orders, openingCash: 5000, cashMovements,
+    // Gezaehlt: 50,00 + 6,00 Barumsatz - 20,00 Entnahme = 36,00
+    cashCount: [{ denomination: 2000, count: 1 }, { denomination: 1000, count: 1 }, { denomination: 500, count: 1 }, { denomination: 100, count: 1 }],
+  });
+  assert.equal(report.countedCash, 3600);
+  assert.equal(report.cashDifference, 0, "ohne die Bewegung waeren es -20,00");
 });
 
 test("Abschlusstext bleibt in der Druckbreite", async () => {

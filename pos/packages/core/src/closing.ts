@@ -26,6 +26,14 @@ import type {
   Timestamp,
 } from "./model.ts";
 import { isTseSecured, PAYMENT_LABELS } from "./order.ts";
+import {
+  CASH_MOVEMENT_LABELS,
+  type CashMovement,
+  cashMovementsWithoutOpening,
+  openingCashFrom,
+  summarizeCashbook,
+  type CashbookSummary,
+} from "./cashbook.ts";
 import { type TaxGroupTotal, type TaxRegistry, createTaxRegistry, summarizeTax } from "./tax.ts";
 
 export class ClosingError extends Error {}
@@ -62,8 +70,15 @@ export interface ClosingReport {
   readonly taxGroups: readonly TaxGroupTotal[];
   readonly taxTotal: Cents;
   readonly payments: readonly PaymentTotal[];
-  /** Bargeldbestand, den die Kasse erwartet: Anfangsbestand plus Barumsatz. */
+  /**
+   * Bargeldbestand, den die Kasse erwartet:
+   * Anfangsbestand + Barumsatz + Einlagen - Entnahmen - Transit.
+   */
   readonly expectedCash: Cents;
+  /** Bargeldbewegungen ohne Umsatz, verdichtet. */
+  readonly cashbook: CashbookSummary;
+  /** Die einzelnen Bewegungen, fuer den Ausdruck. */
+  readonly cashMovements: readonly CashMovement[];
   /** Gezaehltes Bargeld; `null`, wenn nicht gezaehlt wurde. */
   readonly countedCash: Cents | null;
   /** Gezaehlt minus erwartet. Negativ bedeutet: es fehlt Geld. */
@@ -102,6 +117,12 @@ export interface BuildClosingInput {
   readonly openingCash?: Cents;
   readonly cashCount?: readonly CashCountEntry[];
   readonly taxRegistry?: TaxRegistry;
+  /**
+   * Bargeldbewegungen des Zeitraums: Tageseroeffnung, Einlagen, Entnahmen,
+   * Geldtransit. Ohne sie stimmt der Soll-Kassenbestand nicht - eine Entnahme
+   * am Mittag wuerde am Abend als Fehlbetrag erscheinen.
+   */
+  readonly cashMovements?: readonly CashMovement[];
 }
 
 /**
@@ -158,9 +179,18 @@ export function buildClosing(input: BuildClosingInput): ClosingReport {
     allLines.filter((l) => l.businessCaseType === "PfandRueckzahlung").map((l) => l.gross),
   );
 
-  const openingCash = input.openingCash ?? 0;
+  const cashMovements = input.cashMovements ?? [];
+  const cashbook = summarizeCashbook(cashMovements);
+
+  // Der Anfangsbestand kommt aus der Eroeffnungsbuchung, wenn es eine gibt -
+  // sie ist gezaehlt und damit belastbarer als ein uebergebener Wert. Ohne
+  // Eroeffnung gilt der uebergebene Wert (z. B. der Endbestand von gestern).
+  const openingCash = cashMovements.some((movement) => movement.type === "OPENING")
+    ? openingCashFrom(cashMovements)
+    : input.openingCash ?? 0;
+
   const cashSales = byMethod.get("CASH")?.amount ?? 0;
-  const expectedCash = openingCash + cashSales;
+  const expectedCash = openingCash + cashSales + cashbook.netMovements;
   const cashCount = input.cashCount ?? [];
   const countedCash = cashCount.length > 0 ? countCash(cashCount) : null;
 
@@ -195,6 +225,8 @@ export function buildClosing(input: BuildClosingInput): ClosingReport {
     taxTotal: sumCents(taxGroups.map((group) => group.tax)),
     payments,
     expectedCash,
+    cashbook,
+    cashMovements: cashMovementsWithoutOpening(cashMovements),
     countedCash,
     cashDifference: countedCash == null ? null : countedCash - expectedCash,
     firstReceiptNumber: sorted[0]?.receiptNumber ?? null,
@@ -249,6 +281,10 @@ export function renderClosingText(report: ClosingReport, width = 42): string {
   }
   out.push(rule);
   out.push(row("Anfangsbestand bar", formatAmount(report.closing.openingCash)));
+  if (report.cashbook.deposits !== 0) out.push(row(CASH_MOVEMENT_LABELS.DEPOSIT, formatAmount(report.cashbook.deposits)));
+  if (report.cashbook.withdrawals !== 0) out.push(row(CASH_MOVEMENT_LABELS.WITHDRAWAL, formatAmount(report.cashbook.withdrawals)));
+  if (report.cashbook.transits !== 0) out.push(row(CASH_MOVEMENT_LABELS.TRANSIT, formatAmount(report.cashbook.transits)));
+  if (report.cashbook.tipOuts !== 0) out.push(row(CASH_MOVEMENT_LABELS.TIP_OUT, formatAmount(report.cashbook.tipOuts)));
   out.push(row("Soll-Kassenbestand", formatAmount(report.expectedCash)));
   if (report.countedCash != null) {
     out.push(row("Gezaehlt", formatAmount(report.countedCash)));

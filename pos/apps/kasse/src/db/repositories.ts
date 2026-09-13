@@ -552,7 +552,8 @@ export async function loadOutbox(db: Db): Promise<OutboxState> {
   const rows = await db.all<{
     key: string; kind: string; entity_id: string; tenant_id: string; payload: string;
     created_at: string; attempts: number; next_attempt_at: string; last_error: string | null;
-  }>("SELECT * FROM outbox ORDER BY created_at, key");
+    // Einfuegereihenfolge, nicht Zeitstempeltext - siehe listStockMovements.
+  }>("SELECT * FROM outbox ORDER BY rowid");
   return {
     entries: rows.map((row) => ({
       key: row.key, kind: row.kind as OutboxKind, entityId: row.entity_id, tenantId: row.tenant_id,
@@ -617,7 +618,17 @@ export async function applyStockMovement(db: Db, movement: StockMovement): Promi
   });
 }
 
-/** Bewegungen eines Artikels oder aller Artikel, neueste zuerst. */
+/**
+ * Bewegungen eines Artikels oder aller Artikel, neueste zuerst.
+ *
+ * Sortiert wird nach der Einfuegereihenfolge (`rowid`), nicht nach dem
+ * Zeitstempel. Der Grund: unsere Zeitstempel tragen den Offset der Ortszeit,
+ * und als Zeichenkette sortieren die nicht chronologisch -
+ * `09:00:00+02:00` liegt real *vor* `09:00:00+00:00`, als Text aber dahinter.
+ * Ueber die Sommerzeitumstellung hinweg wuerde ein Journal damit in falscher
+ * Reihenfolge stehen, und ein Journal in falscher Reihenfolge erklaert nichts
+ * mehr.
+ */
 export async function listStockMovements(
   db: Db,
   options: { readonly productId?: Id; readonly limit?: number } = {},
@@ -625,11 +636,11 @@ export async function listStockMovements(
   const limit = options.limit ?? 100;
   const rows = options.productId
     ? await db.all<StockMovementRow>(
-        "SELECT * FROM stock_movement WHERE product_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+        "SELECT * FROM stock_movement WHERE product_id = ? ORDER BY rowid DESC LIMIT ?",
         [options.productId, limit],
       )
     : await db.all<StockMovementRow>(
-        "SELECT * FROM stock_movement ORDER BY created_at DESC, id DESC LIMIT ?",
+        "SELECT * FROM stock_movement ORDER BY rowid DESC LIMIT ?",
         [limit],
       );
 
@@ -650,7 +661,7 @@ interface StockMovementRow {
 /** TSE-Ausfaelle, fuer die Ausfalldokumentation und die Anzeige im Status. */
 export async function listTseIncidents(db: Db, limit = 100): Promise<{ occurredAt: string; reason: string; orderId: string | null }[]> {
   const rows = await db.all<{ occurred_at: string; reason: string; order_id: string | null }>(
-    "SELECT occurred_at, reason, order_id FROM tse_incident ORDER BY occurred_at DESC LIMIT ?",
+    "SELECT occurred_at, reason, order_id FROM tse_incident ORDER BY rowid DESC LIMIT ?",
     [limit],
   );
   return rows.map((row) => ({ occurredAt: row.occurred_at, reason: row.reason, orderId: row.order_id }));
