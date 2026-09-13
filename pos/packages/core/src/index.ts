@@ -16,6 +16,7 @@ export * from "./deposit.ts";
 export * from "./cart.ts";
 export * from "./order.ts";
 export * from "./receipt.ts";
+export * from "./qr.ts";
 export * from "./closing.ts";
 export * from "./tse/types.ts";
 export { MockTse, type MockTseOptions } from "./tse/mock.ts";

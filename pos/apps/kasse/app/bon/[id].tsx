@@ -14,12 +14,13 @@
 import React, { useEffect, useState } from "react";
 import { ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import QRCode from "react-native-qrcode-svg";
 import {
   type Order,
   type ReceiptView,
   buildReceiptView,
+  createQrCode,
   formatAmount,
+  qrRuns,
   renderReceiptText,
 } from "@kp/core";
 import { useKasse } from "../../src/state/KasseProvider.tsx";
@@ -140,7 +141,7 @@ export default function BonScreen() {
           {view.qrPayload ? (
             <View style={styles.qr}>
               {/* Der QR-Code ist der schnellste Weg fuer eine Kassennachschau. */}
-              <QRCode backgroundColor="#FFFFFF" color="#000000" size={196} value={view.qrPayload} />
+              <QrView payload={view.qrPayload} />
               <Muted>Belegpruefung: QR-Code scannen</Muted>
             </View>
           ) : (
@@ -175,6 +176,56 @@ export default function BonScreen() {
         </Muted>
       </ScrollView>
     </Screen>
+  );
+}
+
+/**
+ * QR-Code zeichnen.
+ *
+ * Ohne Zeichenbibliothek: der Encoder im Kern liefert die Modulmatrix, und
+ * `qrRuns` fasst zusammenhaengende dunkle Module zu waagerechten Balken
+ * zusammen. Ein Balken ist eine absolut gesetzte Flaeche - das halbiert die
+ * Zahl der Elemente gegenueber einem Quadrat je Modul.
+ *
+ * Die stille Zone von vier Modulen ist Teil der Norm und nicht bloss Rahmen:
+ * ohne sie findet ein Lesegeraet die Suchmuster nicht zuverlaessig.
+ */
+function QrView({ payload, size = 220 }: { payload: string; size?: number }) {
+  const code = React.useMemo(() => {
+    try {
+      return createQrCode(payload);
+    } catch {
+      // Ein nicht darstellbarer Inhalt darf den Beleg nicht unsichtbar
+      // machen - die TSE-Angaben stehen darunter ohnehin im Klartext.
+      return null;
+    }
+  }, [payload]);
+
+  if (!code) return <Muted>QR-Code konnte nicht erzeugt werden.</Muted>;
+
+  const quiet = 4;
+  const total = code.size + quiet * 2;
+  const module = size / total;
+  const runs = React.useMemo(() => qrRuns(code), [code]);
+
+  return (
+    <View style={[styles.qrCanvas, { width: size, height: size }]}>
+      {runs.map((run) => (
+        <View
+          key={`${run.y}-${run.x}`}
+          style={{
+            position: "absolute",
+            left: (run.x + quiet) * module,
+            top: (run.y + quiet) * module,
+            width: run.length * module,
+            // Ein Haar Ueberlappung, damit zwischen den Zeilen keine helle
+            // Linie entsteht, wenn die Modulbreite kein ganzes Pixel ist.
+            height: module + 0.5,
+            backgroundColor: "#000000",
+          }}
+        />
+      ))}
+    </View>
   );
 }
 
@@ -214,4 +265,5 @@ const styles = StyleSheet.create({
   tseLine: { color: colors.textMuted, fontSize: font.small },
   footerLine: { color: colors.text, fontSize: font.small, marginTop: space.sm },
   qr: { alignItems: "center", gap: space.sm, marginVertical: space.md },
+  qrCanvas: { backgroundColor: "#FFFFFF", position: "relative" },
 });

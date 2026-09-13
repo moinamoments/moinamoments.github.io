@@ -524,32 +524,35 @@ function penalty(matrix: readonly (readonly boolean[])[]): number {
     }
   }
 
-  // Regel 3: Muster, die einem Suchmuster aehneln.
-  const pattern = [true, false, true, true, true, false, true];
-  const matches = (values: boolean[], at: number): boolean =>
-    pattern.every((expected, index) => values[at + index] === expected);
-  const hasQuiet = (values: boolean[], at: number, before: boolean): boolean => {
-    const range = before ? [at - 4, at - 1] : [at + 7, at + 10];
-    for (let i = range[0] as number; i <= (range[1] as number); i++) {
-      if (i < 0 || i >= values.length) continue;
-      if (values[i]) return false;
-    }
-    return true;
-  };
-  const lines: boolean[][] = [];
-  for (let y = 0; y < size; y++) lines.push([...(matrix[y] as readonly boolean[])]);
-  for (let x = 0; x < size; x++) lines.push(matrix.map((row) => (row as readonly boolean[])[x] as boolean));
-  for (const line of lines) {
-    for (let at = 0; at + 7 <= line.length; at++) {
-      if (matches(line, at) && (hasQuiet(line, at, true) || hasQuiet(line, at, false))) score += 40;
+  // Regel 3: Muster, die ein Lesegeraet mit einem Suchmuster verwechseln kann.
+  //
+  // Gesucht wird das Verhaeltnis 1:1:3:1:1 mit vier hellen Modulen auf einer
+  // Seite - als Bitmuster `10111010000` oder `00001011101`, jeweils elf
+  // Module. Das Fenster muss vollstaendig im Symbol liegen: ein Muster, das
+  // erst durch den Rand entsteht, ist keines. Andernfalls bekommen Codes mit
+  // Muster am Rand zu viele Strafpunkte, und die Maskenwahl faellt anders aus
+  // als bei jedem anderen Erzeuger.
+  const FORWARD = 0b10111010000;
+  const BACKWARD = 0b00001011101;
+  for (let line = 0; line < size; line++) {
+    let horizontal = 0;
+    let vertical = 0;
+    for (let index = 0; index < size; index++) {
+      horizontal = ((horizontal << 1) & 0x7ff) | (((matrix[line] as readonly boolean[])[index] as boolean) ? 1 : 0);
+      vertical = ((vertical << 1) & 0x7ff) | (((matrix[index] as readonly boolean[])[line] as boolean) ? 1 : 0);
+      if (index >= 10) {
+        if (horizontal === FORWARD || horizontal === BACKWARD) score += 40;
+        if (vertical === FORWARD || vertical === BACKWARD) score += 40;
+      }
     }
   }
 
-  // Regel 4: Abweichung vom Verhaeltnis hell zu dunkel.
+  // Regel 4: Abweichung vom Verhaeltnis hell zu dunkel, in Schritten von
+  // fuenf Prozentpunkten.
   let dark = 0;
   for (const row of matrix) for (const value of row) if (value) dark++;
   const percent = (dark * 100) / (size * size);
-  score += Math.floor(Math.abs(percent - 50) / 5) * 10;
+  score += Math.abs(Math.ceil(percent / 5) - 10) * 10;
 
   return score;
 }
@@ -562,9 +565,27 @@ function penalty(matrix: readonly (readonly boolean[])[]): number {
  * verwechseln - und ein Beleg-QR-Code, den das Pruefgeraet des Finanzamts
  * nicht liest, ist wertlos.
  */
-export function createQrCode(text: string, options: { errorCorrection?: QrErrorCorrection } = {}): QrCode {
+export function createQrCode(
+  text: string,
+  options: {
+    readonly errorCorrection?: QrErrorCorrection;
+    /**
+     * Maskenmuster festsetzen (0 bis 7).
+     *
+     * Im Betrieb nicht gesetzt: die Norm verlangt die Wahl nach den
+     * Strafregeln. Gebraucht wird das nur, um den Code gegen eine andere
+     * Umsetzung zu vergleichen - dann muessen beide dieselbe Maske
+     * verwenden, sonst vergleicht man zwei gueltige, aber verschiedene
+     * Codes.
+     */
+    readonly mask?: number;
+  } = {},
+): QrCode {
   if (options.errorCorrection && options.errorCorrection !== "M") {
     throw new QrError(`Fehlerkorrekturstufe ${options.errorCorrection} ist nicht umgesetzt`);
+  }
+  if (options.mask !== undefined && !(Number.isInteger(options.mask) && options.mask >= 0 && options.mask <= 7)) {
+    throw new QrError(`Maskenmuster muss eine ganze Zahl von 0 bis 7 sein, war ${options.mask}`);
   }
   if (text === "") throw new QrError("Ein QR-Code ohne Inhalt ist nicht erzeugbar");
 
@@ -586,8 +607,9 @@ export function createQrCode(text: string, options: { errorCorrection?: QrErrorC
   // Nur die Datenfelder sind jetzt noch `null`.
   placeData(reserved, codewords);
 
+  const candidates = options.mask === undefined ? [0, 1, 2, 3, 4, 5, 6, 7] : [options.mask];
   let best: { matrix: boolean[][]; score: number } | null = null;
-  for (let mask = 0; mask < 8; mask++) {
+  for (const mask of candidates) {
     const candidate: Cell[][] = reserved.map((row) => [...row]);
     // Maskiert werden nur die Datenfelder - erkennbar daran, dass sie in der
     // Vorlage ohne Formatfelder noch leer waren.
@@ -624,9 +646,11 @@ function isFormatArea(x: number, y: number, size: number, version: number): bool
  * Matrix in waagerechte Balken zerlegen.
  *
  * Fuer die Anzeige: ein Rechteck je zusammenhaengender dunkler Strecke statt
- * eines je Modul. Bei einem Beleg-QR-Code der Version 10 sind das rund 400
- * Rechtecke statt 3400 - der Unterschied zwischen einer Ansicht, die sofort
- * da ist, und einer, die ruckelt.
+ * eines je Modul. Ein QR-Code ist kleinteilig, die Balken sind im Schnitt
+ * knapp zwei Module lang - bei einem Beleg-QR-Code der Version 13 sind es
+ * rund 1240 Rechtecke statt 2390 Einzelmodulen. Keine Groessenordnung, aber
+ * die Haelfte der Elemente, und die Anzeige bleibt ohne Zeichenbibliothek
+ * auskommend.
  */
 export function qrRuns(code: QrCode): { y: number; x: number; length: number }[] {
   const runs: { y: number; x: number; length: number }[] = [];
@@ -645,6 +669,25 @@ export function qrRuns(code: QrCode): { y: number; x: number; length: number }[]
   }
   return runs;
 }
+
+/**
+ * Zwischenschritte, offengelegt fuer die Tests.
+ *
+ * Reed-Solomon-Codewoerter und Formatbits lassen sich an der fertigen Matrix
+ * nur mittelbar pruefen. Sie hier zugaenglich zu machen, macht aus einem
+ * "irgendwo stimmt etwas nicht" ein "dieses Codewort ist falsch". Nicht Teil
+ * der Schnittstelle fuer die Anwendung.
+ */
+export const qrInternals = {
+  encodeData,
+  interleave,
+  errorCorrection,
+  dataCapacity,
+  maskBit,
+  formatBits,
+  versionBits,
+  pickVersion,
+};
 
 /** Matrix als Text, fuer Tests und die Fehlersuche im Terminal. */
 export function qrToText(code: QrCode, dark = "██", light = "  "): string {
