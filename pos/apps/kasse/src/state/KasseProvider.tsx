@@ -60,10 +60,13 @@ import {
   setServiceMode as setCartServiceMode,
   setWaiveDeposit,
   systemClock,
+  movementsForOrder,
   type OpenTransaction,
+  type StockMovement,
 } from "@kp/core";
 import { type Db, openDb } from "../db/database.ts";
 import {
+  applyStockMovement,
   countOutbox,
   getDevice,
   getStore,
@@ -174,7 +177,7 @@ export function KasseProvider({ children, tse }: { children: React.ReactNode; ts
       // Ein fehlerhafter Pfandverweis darf die Kasse nicht lahmlegen, muss
       // aber sichtbar werden.
       setError(`Pfandzuordnung fehlerhaft: ${(issue as Error).message}`);
-      return { for: () => [], refundable: () => [] };
+      return { for: () => [], all: () => [] };
     }
   }, [products]);
 
@@ -246,6 +249,31 @@ export function KasseProvider({ children, tse }: { children: React.ReactNode; ts
       tenant, store, device, user, clock, newId, tse: tseClient,
     });
   }, [clock, device, store, tenant, tseClient, user]);
+
+  /**
+   * Bestandsbewegungen eines Belegs buchen.
+   *
+   * Bewusst **nach** dem Speichern des Belegs und bewusst so, dass ein Fehler
+   * hier den Beleg nicht zurueckrollt: der Verkauf hat stattgefunden, der
+   * Beleg ist der Geschaeftsvorfall. Ein Bestand, der um eine Flasche
+   * danebenliegt, ist ein Aergernis - ein verlorener Beleg ist ein Verstoss
+   * gegen die Aufzeichnungspflicht.
+   */
+  const bookStock = useCallback(
+    async (handle: Db, order: Order, userId: string): Promise<void> => {
+      const relevant = products.filter((product) => product.trackStock);
+      if (relevant.length === 0) return;
+      try {
+        const movements = movementsForOrder(order, products, { newId, userId });
+        for (const result of movements) {
+          await applyStockMovement(handle, result.movement satisfies StockMovement);
+        }
+      } catch (issue) {
+        setError(`Bestand konnte nicht fortgeschrieben werden: ${(issue as Error).message}`);
+      }
+    },
+    [products],
+  );
 
   const actions = useMemo<KasseActions>(() => {
     const requireDb = (): Db => {
@@ -334,10 +362,14 @@ export function KasseProvider({ children, tse }: { children: React.ReactNode; ts
             lastError: null,
           });
 
+          await bookStock(handle, order, user.id);
+
           openTransaction.current = null;
           setCart(emptyCart(tenant.id, cart.serviceMode));
           setLastOrder(order);
           setOutboxPending(await countOutbox(handle));
+          // Der Bestand hat sich geaendert - die Kacheln muessen es zeigen.
+          await load(handle);
           return order;
         } finally {
           setBusy(false);
@@ -375,8 +407,10 @@ export function KasseProvider({ children, tse }: { children: React.ReactNode; ts
             nextAttemptAt: stored.paidAt ?? stored.startedAt,
             lastError: null,
           });
+          await bookStock(handle, stored, user.id);
           setLastOrder(stored);
           setOutboxPending(await countOutbox(handle));
+          await load(handle);
           return stored;
         } finally {
           setBusy(false);
@@ -388,7 +422,7 @@ export function KasseProvider({ children, tse }: { children: React.ReactNode; ts
       },
       db: requireDb,
     };
-  }, [cart, clock, db, deposits, ensureTransaction, load, store, tenant, tseClient, user, device]);
+  }, [bookStock, cart, clock, db, deposits, ensureTransaction, load, store, tenant, tseClient, user, device]);
 
   const value = useMemo<KasseState & KasseActions>(
     () => ({

@@ -16,18 +16,25 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ONE,
+  type Category,
+  type CategoryNode,
   type ComputedLine,
   type PaymentIntent,
   type PaymentMethod,
   type Product,
+  buildCategoryTree,
+  categoryPath,
   formatAmount,
   formatEuro,
   formatQuantity,
+  formatStock,
   isDeposit,
   parseAmount,
+  productsInCategory,
+  stockState,
 } from "@kp/core";
 import { useKasse } from "../src/state/KasseProvider.tsx";
-import { Button, Card, Field, Label, Muted, Notice, Screen, Segmented, Tile, Title } from "../src/components/ui.tsx";
+import { Button, Card, CategoryTile, Field, Label, Muted, Notice, Screen, Segmented, Tile, Title } from "../src/components/ui.tsx";
 import { colors, font, radius, space, touch } from "../src/theme.ts";
 
 export default function KasseScreen() {
@@ -36,7 +43,14 @@ export default function KasseScreen() {
   const { width } = useWindowDimensions();
   const wide = width >= 820;
 
-  const [categoryId, setCategoryId] = useState<string>("");
+  /**
+   * Wo im Warengruppenbaum stehen wir?
+   *
+   * `null` ist die oberste Ebene. Der Bediener steigt hinein und ueber die
+   * Pfadleiste wieder heraus - kein Zuruecktaste-Raten, weil am Verkaufsstand
+   * jeder Fehlgriff Zeit kostet.
+   */
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [openAmount, setOpenAmount] = useState<{ product: Product | null; text: string } | null>(null);
   const [weight, setWeight] = useState<{ product: Product; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
@@ -46,17 +60,42 @@ export default function KasseScreen() {
    * gebucht, an dem sie haengen - eine Kachel "Becher" wuerde zu Belegen
    * fuehren, auf denen Pfand ohne Ware steht.
    */
-  const sellable = useMemo(() => kasse.products.filter((product) => !product.deposit), [kasse.products]);
+  const sellable = useMemo(() => kasse.products.filter((product) => !product.isDeposit), [kasse.products]);
 
-  const categories = useMemo(() => {
-    const used = new Set(sellable.map((product) => product.categoryId));
-    return kasse.categories.filter((category) => used.has(category.id));
-  }, [kasse.categories, sellable]);
+  // Der Baum wirft nie - ein Datenfehler in den Warengruppen darf den Verkauf
+  // nicht anhalten. Leere Gruppen werden ausgeblendet, damit der Bildschirm
+  // nicht mit Sackgassen zugestellt ist.
+  const tree = useMemo(
+    () => buildCategoryTree(kasse.categories, sellable).filter((node) => node.totalProductCount > 0),
+    [kasse.categories, sellable],
+  );
 
-  const activeCategory = categoryId || categories[0]?.id || "";
-  const visible = useMemo(
-    () => sellable.filter((product) => product.categoryId === activeCategory),
-    [activeCategory, sellable],
+  const path = useMemo<Category[]>(
+    () => (categoryId ? categoryPath(kasse.categories, categoryId) : []),
+    [categoryId, kasse.categories],
+  );
+
+  /** Untergruppen und Artikel der aktuellen Ebene. */
+  const level = useMemo<{ subcategories: readonly CategoryNode[]; products: readonly Product[] }>(() => {
+    if (categoryId === null) {
+      // Oberste Ebene: die Wurzelgruppen, dazu Artikel ohne Gruppe im Baum.
+      const rootIds = new Set(kasse.categories.filter((c) => c.parentId == null).map((c) => c.id));
+      return {
+        subcategories: tree,
+        products: sellable.filter((product) => !rootIds.has(product.categoryId) &&
+          !kasse.categories.some((c) => c.id === product.categoryId)),
+      };
+    }
+    const node = findNode(tree, categoryId);
+    return {
+      subcategories: node?.children.filter((child) => child.totalProductCount > 0) ?? [],
+      products: productsInCategory(sellable, kasse.categories, categoryId),
+    };
+  }, [categoryId, kasse.categories, sellable, tree]);
+
+  const rootProducts = useMemo(
+    () => (categoryId === null ? sellable.filter((product) => isRootCategory(kasse.categories, product.categoryId)) : []),
+    [categoryId, kasse.categories, sellable],
   );
 
   if (!kasse.ready) {
@@ -66,6 +105,15 @@ export default function KasseScreen() {
       </Screen>
     );
   }
+
+  /** Untergruppen zuerst, dann Artikel - so sucht man am Stand. */
+  const entries = useMemo<TileEntry[]>(
+    () => [
+      ...level.subcategories.map((node) => ({ kind: "category" as const, node })),
+      ...[...level.products, ...rootProducts].map((product) => ({ kind: "product" as const, product })),
+    ],
+    [level, rootProducts],
+  );
 
   const onTile = (product: Product) => {
     if (product.price == null) {
@@ -87,30 +135,44 @@ export default function KasseScreen() {
 
         <View style={[styles.body, wide && styles.bodyWide]}>
           <View style={styles.flex}>
-            <Segmented
-              options={categories.map((category) => ({ value: category.id, label: category.name }))}
-              value={activeCategory}
-              onChange={setCategoryId}
-            />
+            <Breadcrumb path={path} onNavigate={setCategoryId} />
             <FlatList
               contentContainerStyle={styles.grid}
-              data={visible}
-              keyExtractor={(item) => item.id}
+              data={entries}
+              keyExtractor={(entry) => (entry.kind === "category" ? `c-${entry.node.category.id}` : `p-${entry.product.id}`)}
               numColumns={wide ? 4 : 2}
               key={wide ? "wide" : "narrow"}
               columnWrapperStyle={styles.gridRow}
-              renderItem={({ item }) => (
+              renderItem={({ item: entry }) => (
                 <View style={styles.gridItem}>
-                  <Tile
-                    color={kasse.categories.find((c) => c.id === item.categoryId)?.color ?? null}
-                    hint={depositHint(kasse, item)}
-                    name={item.name}
-                    onPress={() => onTile(item)}
-                    price={item.price == null ? "Betrag eingeben" : formatEuro(item.price)}
-                  />
+                  {entry.kind === "category" ? (
+                    <CategoryTile
+                      color={entry.node.category.color}
+                      count={entry.node.totalProductCount}
+                      name={entry.node.category.name}
+                      onPress={() => setCategoryId(entry.node.category.id)}
+                    />
+                  ) : (
+                    <Tile
+                      badge={formatStock(entry.product)}
+                      badgeTone={stockTone(entry.product)}
+                      color={kasse.categories.find((c) => c.id === entry.product.categoryId)?.color ?? null}
+                      hint={depositHint(kasse, entry.product)}
+                      imageUrl={entry.product.image?.url ?? null}
+                      name={entry.product.name}
+                      onPress={() => onTile(entry.product)}
+                      price={entry.product.price == null ? "Betrag eingeben" : formatEuro(entry.product.price)}
+                    />
+                  )}
                 </View>
               )}
-              ListEmptyComponent={<Muted>In dieser Warengruppe sind keine Artikel angelegt.</Muted>}
+              ListEmptyComponent={
+                <Muted>
+                  {kasse.products.length === 0
+                    ? "Noch keine Artikel angelegt - unter Artikel anlegen."
+                    : "Hier sind keine Artikel einsortiert."}
+                </Muted>
+              }
             />
           </View>
 
@@ -163,6 +225,62 @@ export default function KasseScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+type TileEntry =
+  | { readonly kind: "category"; readonly node: CategoryNode }
+  | { readonly kind: "product"; readonly product: Product };
+
+function findNode(nodes: readonly CategoryNode[], id: string): CategoryNode | null {
+  for (const node of nodes) {
+    if (node.category.id === id) return node;
+    const found = findNode(node.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function isRootCategory(categories: readonly Category[], categoryId: string): boolean {
+  const category = categories.find((c) => c.id === categoryId);
+  return category != null && category.parentId == null;
+}
+
+/** Farbe der Bestandsangabe auf der Kachel. */
+function stockTone(product: Product): "normal" | "warning" | "danger" {
+  switch (stockState(product)) {
+    case "EMPTY":
+    case "NEGATIVE":
+      return "danger";
+    case "LOW":
+      return "warning";
+    default:
+      return "normal";
+  }
+}
+
+/**
+ * Pfadleiste.
+ *
+ * Zeigt, wo man ist, und bringt mit einem Griff zurueck - auch mehrere Ebenen
+ * auf einmal. Eine Zuruecktaste, die immer nur eine Ebene nimmt, ist bei vier
+ * Ebenen vier Tipper.
+ */
+function Breadcrumb({ path, onNavigate }: { path: readonly Category[]; onNavigate: (id: string | null) => void }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.breadcrumb}>
+      <Pressable accessibilityRole="button" onPress={() => onNavigate(null)} style={styles.crumb}>
+        <Text style={[styles.crumbText, path.length === 0 && styles.crumbTextActive]}>Alle</Text>
+      </Pressable>
+      {path.map((category, index) => (
+        <React.Fragment key={category.id}>
+          <Text style={styles.crumbSeparator}>{"\u203a"}</Text>
+          <Pressable accessibilityRole="button" onPress={() => onNavigate(category.id)} style={styles.crumb}>
+            <Text style={[styles.crumbText, index === path.length - 1 && styles.crumbTextActive]}>{category.name}</Text>
+          </Pressable>
+        </React.Fragment>
+      ))}
+    </ScrollView>
   );
 }
 
@@ -478,6 +596,11 @@ const styles = StyleSheet.create({
   statusBar: { gap: space.sm, padding: space.md },
   body: { flex: 1, padding: space.md },
   bodyWide: { flexDirection: "row", gap: space.lg },
+  breadcrumb: { alignItems: "center", gap: space.xs, paddingVertical: space.sm },
+  crumb: { justifyContent: "center", minHeight: 40, paddingHorizontal: space.sm },
+  crumbText: { color: colors.textMuted, fontSize: font.body, fontWeight: "600" },
+  crumbTextActive: { color: colors.text },
+  crumbSeparator: { color: colors.textMuted, fontSize: font.body },
   grid: { gap: space.sm, paddingBottom: space.xl },
   gridRow: { gap: space.sm },
   gridItem: { flex: 1 },

@@ -18,6 +18,12 @@
  * Migrationen laufen ueber `user_version`. Jede Migration ist unteilbar und
  * laeuft genau einmal - nach vorne. Ein Rueckwaertsweg ist bewusst nicht
  * vorgesehen: eine Kasse mit Belegen wird nicht zurueckgerollt.
+ *
+ * Solange die App nicht ausgeliefert ist, wird Migration 1 fortgeschrieben -
+ * ein Schema, das aus zwanzig Aenderungsschritten an eine noch nie benutzte
+ * Tabelle besteht, liest niemand mehr. **Ab der ersten Auslieferung gilt das
+ * nicht mehr:** dann bekommt jede Aenderung ihre eigene Migration, weil auf
+ * den Geraeten Belege liegen, die zehn Jahre lesbar bleiben muessen.
  */
 
 export interface Migration {
@@ -78,9 +84,14 @@ export const MIGRATIONS: readonly Migration[] = [
         active INTEGER NOT NULL DEFAULT 1
       )`,
 
+      // Warengruppen bilden einen Baum. Die Tiefe begrenzt die Anwendung
+      // (limits.ts), nicht die Datenbank: SQLite kann eine Tiefe nicht
+      // pruefen, und ein Zyklus in den Daten darf den Kassenbildschirm
+      // trotzdem nicht lahmlegen - darum kuemmert sich buildCategoryTree.
       `CREATE TABLE category (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL REFERENCES tenant(id),
+        parent_id TEXT REFERENCES category(id),
         name TEXT NOT NULL,
         color TEXT,
         sort_order INTEGER NOT NULL DEFAULT 0,
@@ -98,12 +109,24 @@ export const MIGRATIONS: readonly Migration[] = [
         tax_key_dine_in INTEGER,
         sku TEXT,
         unit TEXT NOT NULL DEFAULT 'PIECE',
-        deposit_kind TEXT,
-        deposit_refundable INTEGER,
+        is_deposit INTEGER NOT NULL DEFAULT 0,
         color TEXT,
+        image_url TEXT,
+        image_license TEXT,
+        image_license_url TEXT,
+        image_creator TEXT,
+        image_source_url TEXT,
+        image_provider TEXT,
+        track_stock INTEGER NOT NULL DEFAULT 0,
+        stock INTEGER NOT NULL DEFAULT 0,
+        low_stock_threshold INTEGER,
         sort_order INTEGER NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        -- Ein Bild ohne Lizenzangabe darf nicht in den Stamm gelangen: die
+        -- Namensnennung ist bei CC-Lizenzen Pflicht, und nachtraeglich
+        -- herausfinden, woher ein Bild kam, kann niemand.
+        CHECK (image_url IS NULL OR image_license IS NOT NULL)
       )`,
 
       // Pfandzuordnung als eigene Tabelle: ein Artikel kann mehrere
@@ -193,6 +216,24 @@ export const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (device_id, name)
       )`,
 
+      // Bestandsbewegungen. Der Bestand am Artikel ist die Summe dieser
+      // Zeilen; die Zeilen selbst werden nie veraendert, nur ergaenzt. Nur so
+      // ist hinterher zu klaeren, warum von zwanzig Flaschen zwoelf uebrig
+      // sind.
+      `CREATE TABLE stock_movement (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenant(id),
+        store_id TEXT NOT NULL REFERENCES store(id),
+        product_id TEXT NOT NULL REFERENCES product(id),
+        quantity INTEGER NOT NULL,
+        resulting_stock INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        order_id TEXT,
+        user_id TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL
+      )`,
+
       `CREATE TABLE outbox (
         key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -222,6 +263,9 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX idx_payment_order ON order_payment (order_id)`,
       `CREATE INDEX idx_product_category ON product (tenant_id, category_id, sort_order)`,
       `CREATE INDEX idx_outbox_next ON outbox (next_attempt_at)`,
+      `CREATE INDEX idx_category_parent ON category (tenant_id, parent_id, sort_order)`,
+      `CREATE INDEX idx_stock_product ON stock_movement (product_id, created_at)`,
+      `CREATE INDEX idx_stock_created ON stock_movement (created_at)`,
 
       // Unveraenderbarkeit bezahlter Belege, auf Datenbankebene.
       `CREATE TRIGGER trg_order_no_update
@@ -241,6 +285,18 @@ export const MIGRATIONS: readonly Migration[] = [
         FOR EACH ROW WHEN OLD.state = 'PAID'
         BEGIN
           SELECT RAISE(ABORT, 'Ein bezahlter Beleg darf nicht geloescht werden');
+        END`,
+
+      `CREATE TRIGGER trg_stock_no_change
+        BEFORE UPDATE ON stock_movement
+        BEGIN
+          SELECT RAISE(ABORT, 'Eine Bestandsbewegung wird nicht geaendert - Korrektur nur als neue Bewegung');
+        END`,
+
+      `CREATE TRIGGER trg_stock_no_delete
+        BEFORE DELETE ON stock_movement
+        BEGIN
+          SELECT RAISE(ABORT, 'Eine Bestandsbewegung wird nicht geloescht');
         END`,
 
       `CREATE TRIGGER trg_line_no_delete

@@ -21,7 +21,7 @@ import { colors, font, space } from "../src/theme.ts";
 export default function PfandScreen() {
   const kasse = useKasse();
   const router = useRouter();
-  const items = kasse.deposits.refundable();
+  const items = kasse.deposits.all();
   const returns = kasse.totals.lines.filter((line) => line.businessCaseType === "PfandRueckzahlung");
 
   return (
@@ -31,8 +31,9 @@ export default function PfandScreen() {
 
         {items.length === 0 ? (
           <Notice tone="warning">
-            Es sind keine ruecknehmbaren Pfandartikel angelegt. Unter Artikel einen Pfandartikel
-            anlegen und dort Ruecknahme erlauben.
+            Es ist kein Pfandartikel angelegt. Unter Artikel einen Artikel anlegen und dort
+            "Dieser Artikel ist ein Pfandartikel" einschalten - Betrag und Bezeichnung bestimmt der
+            Betrieb selbst.
           </Notice>
         ) : null}
 
@@ -83,9 +84,7 @@ function DepositRow({ item }: { item: DepositItem }) {
       <View style={styles.rowHead}>
         <View>
           <Text style={styles.name}>{item.name}</Text>
-          <Muted>
-            {formatEuro(item.price)} je Stueck {item.kind === "REUSABLE" ? "(Mehrweg)" : "(Einweg)"}
-          </Muted>
+          <Muted>{formatEuro(item.price)} je Stueck</Muted>
         </View>
         {taken > 0 ? <Text style={styles.counter}>{taken / ONE} zurueck</Text> : null}
       </View>

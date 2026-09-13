@@ -9,6 +9,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -93,37 +94,98 @@ export function Button({
   );
 }
 
-/** Artikelkachel des Kassenbildschirms. */
+/**
+ * Artikelkachel des Kassenbildschirms.
+ *
+ * Das Bild ist Beiwerk, nicht Hauptsache: der Name muss lesbar bleiben, auch
+ * wenn das Bild nicht laedt oder das Netz weg ist. Deshalb steht es hinter dem
+ * Text und nicht an seiner Stelle.
+ */
 export function Tile({
   name,
   price,
   hint,
+  badge,
+  badgeTone,
   color,
+  imageUrl,
   onPress,
+  onLongPress,
 }: {
   name: string;
   price: string;
   hint?: string;
+  /** Kurze Zusatzangabe oben rechts, z. B. der Bestand. */
+  badge?: string | null;
+  badgeTone?: "normal" | "warning" | "danger";
+  color?: string | null;
+  imageUrl?: string | null;
+  onPress: () => void;
+  onLongPress?: () => void;
+}) {
+  const badgeColor =
+    badgeTone === "danger" ? colors.danger : badgeTone === "warning" ? colors.warning : colors.textMuted;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={[name, price, badge].filter(Boolean).join(", ")}
+      onPress={onPress}
+      {...(onLongPress ? { onLongPress } : {})}
+      style={({ pressed }) => [
+        styles.tile,
+        { borderColor: color ?? colors.border, opacity: pressed ? 0.75 : 1 },
+      ]}
+    >
+      {imageUrl ? (
+        <Image source={{ uri: imageUrl }} style={styles.tileImage} resizeMode="cover" />
+      ) : null}
+      <View style={styles.tileHeader}>
+        <Text numberOfLines={3} style={styles.tileName}>
+          {name}
+        </Text>
+        {badge ? <Text style={[styles.tileBadge, { color: badgeColor }]}>{badge}</Text> : null}
+      </View>
+      <View>
+        {hint ? <Text style={styles.tileHint}>{hint}</Text> : null}
+        <Text style={styles.tilePrice}>{price}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Kachel fuer eine Untergruppe.
+ *
+ * Sieht bewusst anders aus als eine Artikelkachel - ein Fehlgriff zwischen
+ * "Warengruppe oeffnen" und "Artikel buchen" kostet am Stand Zeit und muss
+ * storniert werden.
+ */
+export function CategoryTile({
+  name,
+  count,
+  color,
+  onPress,
+}: {
+  name: string;
+  count: number;
   color?: string | null;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${name}, ${price}`}
+      accessibilityLabel={`Warengruppe ${name}, ${count} Artikel`}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.tile,
-        { borderColor: color ?? colors.border, opacity: pressed ? 0.75 : 1 },
+        styles.categoryTile,
+        { borderColor: color ?? colors.accent, opacity: pressed ? 0.75 : 1 },
       ]}
     >
       <Text numberOfLines={3} style={styles.tileName}>
         {name}
       </Text>
-      <View>
-        {hint ? <Text style={styles.tileHint}>{hint}</Text> : null}
-        <Text style={styles.tilePrice}>{price}</Text>
-      </View>
+      <Text style={styles.categoryTileHint}>{count} Artikel ›</Text>
     </Pressable>
   );
 }
@@ -229,9 +291,22 @@ export const styles = StyleSheet.create({
     minHeight: touch.tile,
     padding: space.md,
   },
-  tileName: { color: colors.text, fontSize: font.body, fontWeight: "600" },
+  tileImage: { ...StyleSheet.absoluteFillObject, borderRadius: radius.lg - 2, opacity: 0.3 },
+  tileHeader: { flexDirection: "row", gap: space.xs, justifyContent: "space-between" },
+  tileName: { color: colors.text, flex: 1, fontSize: font.body, fontWeight: "600" },
+  tileBadge: { fontSize: font.small, fontWeight: "700" },
   tileHint: { color: colors.deposit, fontSize: font.small },
   tilePrice: { color: colors.textMuted, fontSize: font.label, fontWeight: "700" },
+  categoryTile: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.lg,
+    borderStyle: "dashed",
+    borderWidth: 2,
+    justifyContent: "space-between",
+    minHeight: touch.tile,
+    padding: space.md,
+  },
+  categoryTileHint: { color: colors.accent, fontSize: font.small, fontWeight: "700" },
   segmented: { gap: space.sm, paddingVertical: space.sm },
   segment: {
     backgroundColor: colors.surface,

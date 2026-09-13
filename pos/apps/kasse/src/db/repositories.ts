@@ -26,6 +26,9 @@ import {
   type OutboxKind,
   type OutboxState,
   type ServiceMode,
+  type ProductImage,
+  type StockMovement,
+  type StockMovementReason,
 } from "@kp/core";
 import type { Db, SqlValue } from "./database.ts";
 
@@ -154,30 +157,77 @@ export async function saveUser(db: Db, user: User): Promise<void> {
 
 // --- Artikelstamm --------------------------------------------------------
 
-interface CategoryRow { id: string; tenant_id: string; name: string; color: string | null; sort_order: number; active: number }
+interface CategoryRow {
+  id: string; tenant_id: string; parent_id: string | null; name: string; color: string | null;
+  sort_order: number; active: number;
+}
 
 export async function listCategories(db: Db): Promise<Category[]> {
   const rows = await db.all<CategoryRow>("SELECT * FROM category WHERE active = 1 ORDER BY sort_order, name");
   return rows.map((row) => ({
-    id: row.id, tenantId: row.tenant_id, name: row.name, color: row.color,
+    id: row.id, tenantId: row.tenant_id, parentId: row.parent_id, name: row.name, color: row.color,
     sortOrder: row.sort_order, active: bool(row.active),
   }));
 }
 
 export async function saveCategory(db: Db, category: Category): Promise<void> {
   await db.run(
-    `INSERT INTO category (id, tenant_id, name, color, sort_order, active) VALUES (?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color,
-        sort_order = excluded.sort_order, active = excluded.active`,
-    [category.id, category.tenantId, category.name, category.color ?? null, category.sortOrder, flag(category.active)],
+    `INSERT INTO category (id, tenant_id, parent_id, name, color, sort_order, active) VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET parent_id = excluded.parent_id, name = excluded.name,
+        color = excluded.color, sort_order = excluded.sort_order, active = excluded.active`,
+    [category.id, category.tenantId, category.parentId ?? null, category.name, category.color ?? null,
+      category.sortOrder, flag(category.active)],
   );
+}
+
+/**
+ * Warengruppe ausblenden.
+ *
+ * Untergruppen wandern eine Ebene nach oben, statt mit zu verschwinden - sonst
+ * waeren ihre Artikel am Kassenbildschirm nicht mehr erreichbar. Artikel der
+ * Gruppe selbst bleiben, wo sie sind; sie muessen umsortiert werden.
+ */
+export async function deactivateCategory(db: Db, categoryId: Id): Promise<void> {
+  await db.transaction(async () => {
+    const row = await db.first<{ parent_id: string | null }>("SELECT parent_id FROM category WHERE id = ?", [categoryId]);
+    await db.run("UPDATE category SET parent_id = ? WHERE parent_id = ?", [row?.parent_id ?? null, categoryId]);
+    await db.run("UPDATE category SET active = 0 WHERE id = ?", [categoryId]);
+  });
+}
+
+/** Artikel einer Warengruppe, fuer die Pruefung vor dem Ausblenden. */
+export async function countProductsInCategory(db: Db, categoryId: Id): Promise<number> {
+  const row = await db.first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM product WHERE category_id = ? AND active = 1",
+    [categoryId],
+  );
+  return row?.n ?? 0;
 }
 
 interface ProductRow {
   id: string; tenant_id: string; category_id: string; name: string; description: string | null;
   price: number | null; tax_key: number; tax_key_dine_in: number | null; sku: string | null;
-  unit: string; deposit_kind: string | null; deposit_refundable: number | null; color: string | null;
+  unit: string; is_deposit: number; color: string | null;
+  image_url: string | null; image_license: string | null; image_license_url: string | null;
+  image_creator: string | null; image_source_url: string | null; image_provider: string | null;
+  track_stock: number; stock: number; low_stock_threshold: number | null;
   sort_order: number; active: number; updated_at: string;
+}
+
+/** Bildspalten in ein `ProductImage` - oder `null`, wenn kein Bild da ist. */
+function toImage(row: ProductRow): ProductImage | null {
+  // Die Lizenz ist Pflicht; der CHECK im Schema stellt sicher, dass es keine
+  // Zeile mit Bild ohne Lizenz gibt. Die Pruefung hier faengt den Fall ab,
+  // falls eine aeltere Datenbank doch eine hat.
+  if (!row.image_url || !row.image_license) return null;
+  return {
+    url: row.image_url,
+    license: row.image_license,
+    licenseUrl: row.image_license_url,
+    creator: row.image_creator,
+    sourceUrl: row.image_source_url,
+    provider: row.image_provider,
+  };
 }
 
 /**
@@ -212,10 +262,12 @@ export async function listProducts(db: Db, includeInactive = false): Promise<Pro
     sku: row.sku,
     unit: row.unit as Product["unit"],
     depositProductIds: byProduct.get(row.id) ?? null,
-    deposit: row.deposit_kind
-      ? { kind: row.deposit_kind as "REUSABLE" | "ONE_WAY", refundable: bool(row.deposit_refundable) }
-      : null,
+    isDeposit: bool(row.is_deposit),
     color: row.color,
+    image: toImage(row),
+    trackStock: bool(row.track_stock),
+    stock: row.stock,
+    lowStockThreshold: row.low_stock_threshold,
     sortOrder: row.sort_order,
     active: bool(row.active),
     updatedAt: row.updated_at,
@@ -226,20 +278,34 @@ export async function saveProduct(db: Db, product: Product): Promise<void> {
   await db.transaction(async () => {
     await db.run(
       `INSERT INTO product (id, tenant_id, category_id, name, description, price, tax_key, tax_key_dine_in,
-          sku, unit, deposit_kind, deposit_refundable, color, sort_order, active, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          sku, unit, is_deposit, color, image_url, image_license, image_license_url, image_creator,
+          image_source_url, image_provider, track_stock, stock, low_stock_threshold,
+          sort_order, active, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, name = excluded.name,
           description = excluded.description, price = excluded.price, tax_key = excluded.tax_key,
           tax_key_dine_in = excluded.tax_key_dine_in, sku = excluded.sku, unit = excluded.unit,
-          deposit_kind = excluded.deposit_kind, deposit_refundable = excluded.deposit_refundable,
-          color = excluded.color, sort_order = excluded.sort_order, active = excluded.active,
+          is_deposit = excluded.is_deposit, color = excluded.color,
+          image_url = excluded.image_url, image_license = excluded.image_license,
+          image_license_url = excluded.image_license_url, image_creator = excluded.image_creator,
+          image_source_url = excluded.image_source_url, image_provider = excluded.image_provider,
+          track_stock = excluded.track_stock, low_stock_threshold = excluded.low_stock_threshold,
+          sort_order = excluded.sort_order, active = excluded.active,
           updated_at = excluded.updated_at`,
+      // Der Bestand wird hier bewusst **nicht** mitgeschrieben: er aendert
+      // sich nur ueber Bestandsbewegungen. Ein Artikelformular, das den
+      // Bestand mit ueberschreibt, wuerde jede Bewegung wieder zunichte
+      // machen - und genau das ist der Fehler, den das Journal verhindern
+      // soll. Beim Anlegen ist der Startbestand 0, danach zaehlt nur
+      // applyStockMovement.
       [
         product.id, product.tenantId, product.categoryId, product.name, product.description ?? null,
         product.price, product.taxKey, product.taxKeyDineIn ?? null, product.sku ?? null, product.unit,
-        product.deposit?.kind ?? null,
-        product.deposit ? flag(product.deposit.refundable) : null,
-        product.color ?? null, product.sortOrder, flag(product.active), product.updatedAt,
+        flag(product.isDeposit === true), product.color ?? null,
+        product.image?.url ?? null, product.image?.license ?? null, product.image?.licenseUrl ?? null,
+        product.image?.creator ?? null, product.image?.sourceUrl ?? null, product.image?.provider ?? null,
+        flag(product.trackStock === true), product.stock ?? 0, product.lowStockThreshold ?? null,
+        product.sortOrder, flag(product.active), product.updatedAt,
       ],
     );
     await db.run("DELETE FROM product_deposit WHERE product_id = ?", [product.id]);
@@ -524,6 +590,61 @@ export async function upsertOutboxEntry(db: Db, entry: OutboxEntry): Promise<voi
 export async function countOutbox(db: Db): Promise<number> {
   const row = await db.first<{ n: number }>("SELECT COUNT(*) AS n FROM outbox");
   return row?.n ?? 0;
+}
+
+// --- Bestand -------------------------------------------------------------
+
+/**
+ * Bewegung buchen und den Bestand am Artikel fortschreiben.
+ *
+ * Beides in einer Transaktion: eine Bewegung ohne fortgeschriebenen Bestand
+ * (oder umgekehrt) waere eine Zahl, die nicht mehr zu ihrem Journal passt -
+ * und dann ist beides wertlos.
+ */
+export async function applyStockMovement(db: Db, movement: StockMovement): Promise<void> {
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO stock_movement (id, tenant_id, store_id, product_id, quantity, resulting_stock,
+          reason, order_id, user_id, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [movement.id, movement.tenantId, movement.storeId, movement.productId, movement.quantity,
+        movement.resultingStock, movement.reason, movement.orderId ?? null, movement.userId,
+        movement.note ?? null, movement.createdAt],
+    );
+    // Der Bestand wird aus der Bewegung fortgeschrieben, nicht gesetzt: zwei
+    // gleichzeitige Bewegungen duerfen sich nicht gegenseitig ueberschreiben.
+    await db.run("UPDATE product SET stock = stock + ? WHERE id = ?", [movement.quantity, movement.productId]);
+  });
+}
+
+/** Bewegungen eines Artikels oder aller Artikel, neueste zuerst. */
+export async function listStockMovements(
+  db: Db,
+  options: { readonly productId?: Id; readonly limit?: number } = {},
+): Promise<StockMovement[]> {
+  const limit = options.limit ?? 100;
+  const rows = options.productId
+    ? await db.all<StockMovementRow>(
+        "SELECT * FROM stock_movement WHERE product_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+        [options.productId, limit],
+      )
+    : await db.all<StockMovementRow>(
+        "SELECT * FROM stock_movement ORDER BY created_at DESC, id DESC LIMIT ?",
+        [limit],
+      );
+
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenant_id, storeId: row.store_id, productId: row.product_id,
+    quantity: row.quantity, resultingStock: row.resulting_stock,
+    reason: row.reason as StockMovementReason, orderId: row.order_id, userId: row.user_id,
+    note: row.note, createdAt: row.created_at,
+  }));
+}
+
+interface StockMovementRow {
+  id: string; tenant_id: string; store_id: string; product_id: string; quantity: number;
+  resulting_stock: number; reason: string; order_id: string | null; user_id: string;
+  note: string | null; created_at: string;
 }
 
 /** TSE-Ausfaelle, fuer die Ausfalldokumentation und die Anzeige im Status. */

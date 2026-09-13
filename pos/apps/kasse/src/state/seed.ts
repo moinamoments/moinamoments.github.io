@@ -8,8 +8,8 @@
  *
  * Die Artikel sind Beispiele eines Imbissbetriebs, weil daran alles zu sehen
  * ist, was die Kasse koennen muss: Speisen mit 7/19-Prozent-Umschaltung,
- * Getraenke mit festen 19 Prozent, Becher- und Deckelpfand, Gewichtsware und
- * ein Artikel mit offenem Preis.
+ * Getraenke mit festen 19 Prozent, Becher- und Deckelpfand, Gewichtsware, ein
+ * Artikel mit offenem Preis, Untergruppen und bestandsgefuehrte Flaschenware.
  *
  * Die Angaben des Mandanten sind ausdruecklich Platzhalter. Solange sie nicht
  * ersetzt sind, meldet die App das im Status - ein Bon mit Platzhalteradresse
@@ -87,13 +87,16 @@ export async function ensureSeeded(db: Db, now: string, newId: () => string): Pr
   await saveDevice(db, device);
   await saveUser(db, user);
 
-  const categories: Category[] = [
-    { id: newId(), tenantId, name: "Speisen", color: "#F59E0B", sortOrder: 1, active: true },
-    { id: newId(), tenantId, name: "Getraenke", color: "#38BDF8", sortOrder: 2, active: true },
-    { id: newId(), tenantId, name: "Pfand", color: "#A78BFA", sortOrder: 99, active: true },
-  ];
+  // Zwei Ebenen im Beispiel, damit sofort sichtbar ist, dass es Untergruppen
+  // gibt - und wie sie am Kassenbildschirm aussehen.
+  const speisen: Category = { id: newId(), tenantId, name: "Speisen", parentId: null, color: "#F59E0B", sortOrder: 1, active: true };
+  const getraenke: Category = { id: newId(), tenantId, name: "Getraenke", parentId: null, color: "#38BDF8", sortOrder: 2, active: true };
+  const heiss: Category = { id: newId(), tenantId, name: "Heissgetraenke", parentId: getraenke.id, color: "#38BDF8", sortOrder: 1, active: true };
+  const kalt: Category = { id: newId(), tenantId, name: "Kaltgetraenke", parentId: getraenke.id, color: "#38BDF8", sortOrder: 2, active: true };
+  const pfandKategorie: Category = { id: newId(), tenantId, name: "Pfand", parentId: null, color: "#A78BFA", sortOrder: 99, active: true };
+
+  const categories: Category[] = [speisen, getraenke, heiss, kalt, pfandKategorie];
   for (const category of categories) await saveCategory(db, category);
-  const [speisen, getraenke, pfandKategorie] = categories as [Category, Category, Category];
 
   const product = (over: Partial<Product> & Pick<Product, "name" | "categoryId" | "taxKey">): Product => ({
     id: newId(),
@@ -104,48 +107,25 @@ export async function ensureSeeded(db: Db, now: string, newId: () => string): Pr
     sku: null,
     unit: "PIECE",
     depositProductIds: null,
-    deposit: null,
+    isDeposit: false,
     color: null,
+    image: null,
+    trackStock: false,
+    stock: 0,
+    lowStockThreshold: null,
     sortOrder: 0,
     active: true,
     updatedAt: now,
     ...over,
   });
 
-  // Pfandartikel zuerst: die Warenartikel verweisen darauf.
-  const becher = product({
-    name: "Mehrwegbecher",
-    categoryId: pfandKategorie.id,
-    price: 100,
-    taxKey: TAX_RATES.NORMAL.key,
-    deposit: { kind: "REUSABLE", refundable: true },
-    sortOrder: 1,
-  });
-  const deckel = product({
-    name: "Deckel",
-    categoryId: pfandKategorie.id,
-    price: 30,
-    taxKey: TAX_RATES.NORMAL.key,
-    deposit: { kind: "REUSABLE", refundable: true },
-    sortOrder: 2,
-  });
-  const schale = product({
-    name: "Mehrwegschale",
-    categoryId: pfandKategorie.id,
-    price: 200,
-    taxKey: TAX_RATES.NORMAL.key,
-    deposit: { kind: "REUSABLE", refundable: true },
-    sortOrder: 3,
-  });
-  const einweg = product({
-    name: "Einwegpfand",
-    categoryId: pfandKategorie.id,
-    price: 25,
-    taxKey: TAX_RATES.NORMAL.key,
-    deposit: { kind: "ONE_WAY", refundable: true },
-    sortOrder: 4,
-  });
-  for (const item of [becher, deckel, schale, einweg]) await saveProduct(db, item);
+  // Pfandartikel zuerst: die Warenartikel verweisen darauf. Es sind nur
+  // Beispiele - ein Betrieb legt seine eigenen Gebinde an, beliebig viele.
+  const becher = product({ name: "Becher", categoryId: pfandKategorie.id, price: 100, taxKey: TAX_RATES.NORMAL.key, isDeposit: true, sortOrder: 1 });
+  const deckel = product({ name: "Deckel", categoryId: pfandKategorie.id, price: 30, taxKey: TAX_RATES.NORMAL.key, isDeposit: true, sortOrder: 2 });
+  const schale = product({ name: "Schale", categoryId: pfandKategorie.id, price: 200, taxKey: TAX_RATES.NORMAL.key, isDeposit: true, sortOrder: 3 });
+  const flasche = product({ name: "Flaschenpfand", categoryId: pfandKategorie.id, price: 25, taxKey: TAX_RATES.NORMAL.key, isDeposit: true, sortOrder: 4 });
+  for (const item of [becher, deckel, schale, flasche]) await saveProduct(db, item);
 
   const goods: Product[] = [
     // Speisen: ausser Haus 7 %, im Haus 19 %.
@@ -167,21 +147,26 @@ export async function ensureSeeded(db: Db, now: string, newId: () => string): Pr
       taxKey: TAX_RATES.REDUCED.key, taxKeyDineIn: TAX_RATES.NORMAL.key,
       depositProductIds: [schale.id], sortOrder: 4,
     }),
-    // Heissgetraenke mit Becher und Deckel.
+    // Heissgetraenke mit Becher und Deckel - in der Untergruppe.
     product({
-      name: "Kaffee", categoryId: getraenke.id, price: 250, taxKey: TAX_RATES.NORMAL.key,
+      name: "Kaffee", categoryId: heiss.id, price: 250, taxKey: TAX_RATES.NORMAL.key,
       depositProductIds: [becher.id, deckel.id], sortOrder: 1,
     }),
     product({
-      name: "Tee", categoryId: getraenke.id, price: 220, taxKey: TAX_RATES.NORMAL.key,
+      name: "Tee", categoryId: heiss.id, price: 220, taxKey: TAX_RATES.NORMAL.key,
       depositProductIds: [becher.id, deckel.id], sortOrder: 2,
     }),
-    // Flaschenware mit Einwegpfand.
+    // Flaschenware: Pfand *und* Bestandsfuehrung. Flaschen zaehlt man, Kaffee
+    // aus der Maschine nicht - genau der Unterschied, den die Kasse koennen
+    // muss.
     product({
-      name: "Limonade 0,5 l", categoryId: getraenke.id, price: 250, taxKey: TAX_RATES.NORMAL.key,
-      depositProductIds: [einweg.id], sortOrder: 3,
+      name: "Limonade 0,5 l", categoryId: kalt.id, price: 250, taxKey: TAX_RATES.NORMAL.key,
+      depositProductIds: [flasche.id], trackStock: true, lowStockThreshold: 6 * 1000, sortOrder: 1,
     }),
-    product({ name: "Wasser 0,5 l", categoryId: getraenke.id, price: 200, taxKey: TAX_RATES.NORMAL.key, depositProductIds: [einweg.id], sortOrder: 4 }),
+    product({
+      name: "Wasser 0,5 l", categoryId: kalt.id, price: 200, taxKey: TAX_RATES.NORMAL.key,
+      depositProductIds: [flasche.id], trackStock: true, lowStockThreshold: 6 * 1000, sortOrder: 2,
+    }),
     // Offener Preis: der Betrag wird am Stand eingegeben.
     product({ name: "Sonstiges (Betrag eingeben)", categoryId: speisen.id, price: null, taxKey: TAX_RATES.NORMAL.key, sortOrder: 90 }),
   ];
