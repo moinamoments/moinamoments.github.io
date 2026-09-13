@@ -1,0 +1,538 @@
+/**
+ * Repositories: Datenbankzeilen in Domaenenobjekte und zurueck.
+ *
+ * Die Umwandlung steht an genau einer Stelle. SQLite kennt kein `boolean`
+ * (0/1) und keine verschachtelten Werte (JSON-Spalten) - wuerde jede
+ * Bildschirmseite das selbst umrechnen, waere der erste Beleg mit
+ * `small_business = 0` als "wahr" nur eine Frage der Zeit.
+ */
+
+import {
+  type CashCountEntry,
+  type Category,
+  type Closing,
+  type Device,
+  type Id,
+  type Order,
+  type OrderLine,
+  type Payment,
+  type PaymentMethod,
+  type Product,
+  type Store,
+  type Tenant,
+  type TseTransactionRecord,
+  type User,
+  type OutboxEntry,
+  type OutboxKind,
+  type OutboxState,
+  type ServiceMode,
+} from "@kp/core";
+import type { Db, SqlValue } from "./database.ts";
+
+const bool = (value: number | null): boolean => value === 1;
+const flag = (value: boolean): number => (value ? 1 : 0);
+
+// --- Mandant, Betriebsstaette, Geraet, Bediener ---------------------------
+
+interface TenantRow {
+  id: string; name: string; legal_name: string; street: string; postal_code: string; city: string;
+  country_code: string; tax_number: string | null; vat_id: string | null; email: string | null;
+  phone: string | null; small_business: number; receipt_footer: string | null; currency: string;
+  time_zone: string; created_at: string;
+}
+
+export async function getTenant(db: Db): Promise<Tenant | null> {
+  const row = await db.first<TenantRow>("SELECT * FROM tenant LIMIT 1");
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    legalName: row.legal_name,
+    street: row.street,
+    postalCode: row.postal_code,
+    city: row.city,
+    countryCode: row.country_code,
+    taxNumber: row.tax_number,
+    vatId: row.vat_id,
+    email: row.email,
+    phone: row.phone,
+    smallBusiness: bool(row.small_business),
+    receiptFooter: row.receipt_footer,
+    currency: "EUR",
+    timeZone: row.time_zone,
+    createdAt: row.created_at,
+  };
+}
+
+export async function saveTenant(db: Db, tenant: Tenant): Promise<void> {
+  await db.run(
+    `INSERT INTO tenant (id, name, legal_name, street, postal_code, city, country_code, tax_number,
+        vat_id, email, phone, small_business, receipt_footer, currency, time_zone, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, legal_name = excluded.legal_name, street = excluded.street,
+        postal_code = excluded.postal_code, city = excluded.city, country_code = excluded.country_code,
+        tax_number = excluded.tax_number, vat_id = excluded.vat_id, email = excluded.email,
+        phone = excluded.phone, small_business = excluded.small_business,
+        receipt_footer = excluded.receipt_footer, time_zone = excluded.time_zone`,
+    [
+      tenant.id, tenant.name, tenant.legalName, tenant.street, tenant.postalCode, tenant.city,
+      tenant.countryCode, tenant.taxNumber ?? null, tenant.vatId ?? null, tenant.email ?? null,
+      tenant.phone ?? null, flag(tenant.smallBusiness), tenant.receiptFooter ?? null, "EUR",
+      tenant.timeZone, tenant.createdAt,
+    ],
+  );
+}
+
+interface StoreRow {
+  id: string; tenant_id: string; name: string; street: string | null; postal_code: string | null;
+  city: string | null; active: number;
+}
+
+export async function getStore(db: Db): Promise<Store | null> {
+  const row = await db.first<StoreRow>("SELECT * FROM store WHERE active = 1 LIMIT 1");
+  if (!row) return null;
+  return {
+    id: row.id, tenantId: row.tenant_id, name: row.name, street: row.street,
+    postalCode: row.postal_code, city: row.city, active: bool(row.active),
+  };
+}
+
+export async function saveStore(db: Db, store: Store): Promise<void> {
+  await db.run(
+    `INSERT INTO store (id, tenant_id, name, street, postal_code, city, active) VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, street = excluded.street,
+        postal_code = excluded.postal_code, city = excluded.city, active = excluded.active`,
+    [store.id, store.tenantId, store.name, store.street ?? null, store.postalCode ?? null, store.city ?? null, flag(store.active)],
+  );
+}
+
+interface DeviceRow {
+  id: string; tenant_id: string; store_id: string; name: string; serial_number: string;
+  tse_client_id: string | null; receipt_prefix: string; active: number;
+}
+
+export async function getDevice(db: Db): Promise<Device | null> {
+  const row = await db.first<DeviceRow>("SELECT * FROM device WHERE active = 1 LIMIT 1");
+  if (!row) return null;
+  return {
+    id: row.id, tenantId: row.tenant_id, storeId: row.store_id, name: row.name,
+    serialNumber: row.serial_number, tseClientId: row.tse_client_id,
+    receiptPrefix: row.receipt_prefix, active: bool(row.active),
+  };
+}
+
+export async function saveDevice(db: Db, device: Device): Promise<void> {
+  await db.run(
+    `INSERT INTO device (id, tenant_id, store_id, name, serial_number, tse_client_id, receipt_prefix, active)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, serial_number = excluded.serial_number,
+        tse_client_id = excluded.tse_client_id, receipt_prefix = excluded.receipt_prefix, active = excluded.active`,
+    [device.id, device.tenantId, device.storeId, device.name, device.serialNumber,
+      device.tseClientId ?? null, device.receiptPrefix, flag(device.active)],
+  );
+}
+
+interface UserRow { id: string; tenant_id: string; name: string; role: string; pin_hash: string | null; active: number }
+
+export async function listUsers(db: Db): Promise<User[]> {
+  const rows = await db.all<UserRow>("SELECT * FROM app_user WHERE active = 1 ORDER BY name");
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenant_id, name: row.name,
+    role: row.role as User["role"], pinHash: row.pin_hash, active: bool(row.active),
+  }));
+}
+
+export async function saveUser(db: Db, user: User): Promise<void> {
+  await db.run(
+    `INSERT INTO app_user (id, tenant_id, name, role, pin_hash, active) VALUES (?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role,
+        pin_hash = excluded.pin_hash, active = excluded.active`,
+    [user.id, user.tenantId, user.name, user.role, user.pinHash ?? null, flag(user.active)],
+  );
+}
+
+// --- Artikelstamm --------------------------------------------------------
+
+interface CategoryRow { id: string; tenant_id: string; name: string; color: string | null; sort_order: number; active: number }
+
+export async function listCategories(db: Db): Promise<Category[]> {
+  const rows = await db.all<CategoryRow>("SELECT * FROM category WHERE active = 1 ORDER BY sort_order, name");
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenant_id, name: row.name, color: row.color,
+    sortOrder: row.sort_order, active: bool(row.active),
+  }));
+}
+
+export async function saveCategory(db: Db, category: Category): Promise<void> {
+  await db.run(
+    `INSERT INTO category (id, tenant_id, name, color, sort_order, active) VALUES (?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color,
+        sort_order = excluded.sort_order, active = excluded.active`,
+    [category.id, category.tenantId, category.name, category.color ?? null, category.sortOrder, flag(category.active)],
+  );
+}
+
+interface ProductRow {
+  id: string; tenant_id: string; category_id: string; name: string; description: string | null;
+  price: number | null; tax_key: number; tax_key_dine_in: number | null; sku: string | null;
+  unit: string; deposit_kind: string | null; deposit_refundable: number | null; color: string | null;
+  sort_order: number; active: number; updated_at: string;
+}
+
+/**
+ * Alle Artikel mit ihren Pfandzuordnungen.
+ *
+ * Ein Aufruf, zwei Abfragen - nicht eine Abfrage je Artikel. Bei 300 Artikeln
+ * waere das sonst der Grund, warum der Kassenbildschirm beim Start haengt.
+ */
+export async function listProducts(db: Db, includeInactive = false): Promise<Product[]> {
+  const rows = await db.all<ProductRow>(
+    `SELECT * FROM product ${includeInactive ? "" : "WHERE active = 1"} ORDER BY sort_order, name`,
+  );
+  const links = await db.all<{ product_id: string; deposit_product_id: string }>(
+    "SELECT product_id, deposit_product_id FROM product_deposit ORDER BY sort_order",
+  );
+  const byProduct = new Map<string, string[]>();
+  for (const link of links) {
+    const list = byProduct.get(link.product_id);
+    if (list) list.push(link.deposit_product_id);
+    else byProduct.set(link.product_id, [link.deposit_product_id]);
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    tenantId: row.tenant_id,
+    categoryId: row.category_id,
+    name: row.name,
+    description: row.description,
+    price: row.price,
+    taxKey: row.tax_key,
+    taxKeyDineIn: row.tax_key_dine_in,
+    sku: row.sku,
+    unit: row.unit as Product["unit"],
+    depositProductIds: byProduct.get(row.id) ?? null,
+    deposit: row.deposit_kind
+      ? { kind: row.deposit_kind as "REUSABLE" | "ONE_WAY", refundable: bool(row.deposit_refundable) }
+      : null,
+    color: row.color,
+    sortOrder: row.sort_order,
+    active: bool(row.active),
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function saveProduct(db: Db, product: Product): Promise<void> {
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO product (id, tenant_id, category_id, name, description, price, tax_key, tax_key_dine_in,
+          sku, unit, deposit_kind, deposit_refundable, color, sort_order, active, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, name = excluded.name,
+          description = excluded.description, price = excluded.price, tax_key = excluded.tax_key,
+          tax_key_dine_in = excluded.tax_key_dine_in, sku = excluded.sku, unit = excluded.unit,
+          deposit_kind = excluded.deposit_kind, deposit_refundable = excluded.deposit_refundable,
+          color = excluded.color, sort_order = excluded.sort_order, active = excluded.active,
+          updated_at = excluded.updated_at`,
+      [
+        product.id, product.tenantId, product.categoryId, product.name, product.description ?? null,
+        product.price, product.taxKey, product.taxKeyDineIn ?? null, product.sku ?? null, product.unit,
+        product.deposit?.kind ?? null,
+        product.deposit ? flag(product.deposit.refundable) : null,
+        product.color ?? null, product.sortOrder, flag(product.active), product.updatedAt,
+      ],
+    );
+    await db.run("DELETE FROM product_deposit WHERE product_id = ?", [product.id]);
+    const ids = product.depositProductIds ?? [];
+    for (let index = 0; index < ids.length; index++) {
+      await db.run(
+        "INSERT INTO product_deposit (product_id, deposit_product_id, sort_order) VALUES (?,?,?)",
+        [product.id, ids[index] as string, index],
+      );
+    }
+  });
+}
+
+/**
+ * Artikel ausblenden statt loeschen.
+ *
+ * Ein geloeschter Artikel wuerde alte Belege unlesbar machen - sie verweisen
+ * auf seine Id. Deshalb gibt es kein DELETE auf Artikeln, nur `active = 0`.
+ */
+export async function deactivateProduct(db: Db, productId: Id): Promise<void> {
+  await db.run("UPDATE product SET active = 0 WHERE id = ?", [productId]);
+}
+
+// --- Nummernkreise -------------------------------------------------------
+
+/**
+ * Naechste Nummer eines Kreises.
+ *
+ * Erhoeht und liest in einem Schritt, damit zwei gleichzeitige Verkaeufe
+ * (Bediener tippt schnell, Beleg speichert noch) nicht dieselbe Nummer
+ * bekommen.
+ */
+export async function nextSequence(db: Db, deviceId: Id, name: "receipt" | "closing"): Promise<number> {
+  return db.transaction(async () => {
+    await db.run(
+      `INSERT INTO sequence (device_id, name, value) VALUES (?,?,1)
+       ON CONFLICT(device_id, name) DO UPDATE SET value = value + 1`,
+      [deviceId, name],
+    );
+    const row = await db.first<{ value: number }>(
+      "SELECT value FROM sequence WHERE device_id = ? AND name = ?",
+      [deviceId, name],
+    );
+    return row?.value ?? 1;
+  });
+}
+
+/** Aktueller Stand eines Kreises, ohne ihn zu erhoehen. */
+export async function peekSequence(db: Db, deviceId: Id, name: "receipt" | "closing"): Promise<number> {
+  const row = await db.first<{ value: number }>(
+    "SELECT value FROM sequence WHERE device_id = ? AND name = ?",
+    [deviceId, name],
+  );
+  return row?.value ?? 0;
+}
+
+// --- Belege --------------------------------------------------------------
+
+export async function saveOrder(db: Db, order: Order): Promise<void> {
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO sales_order (id, tenant_id, store_id, device_id, user_id, receipt_number, state,
+          service_mode, total, order_discount, started_at, paid_at, voids_order_id, closing_id, note, tse_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        order.id, order.tenantId, order.storeId, order.deviceId, order.userId, order.receiptNumber,
+        order.state, order.serviceMode, order.total, order.orderDiscount, order.startedAt,
+        order.paidAt ?? null, order.voidsOrderId ?? null, order.closingId ?? null, order.note ?? null,
+        order.tse ? JSON.stringify(order.tse) : null,
+      ],
+    );
+    for (const line of order.lines) {
+      await db.run(
+        `INSERT INTO order_line (id, order_id, position, product_id, name, quantity, unit_price, gross,
+            tax_key, business_case_type, discount, allocated_discount, deposit_for_line_id, modifiers_json, note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          line.id, order.id, line.position, line.productId, line.name, line.quantity, line.unitPrice,
+          line.gross, line.taxKey, line.businessCaseType, line.discount, line.allocatedDiscount,
+          line.depositForLineId ?? null, JSON.stringify(line.modifiers), line.note ?? null,
+        ],
+      );
+    }
+    for (const payment of order.payments) {
+      await db.run(
+        `INSERT INTO order_payment (id, order_id, method, amount, tendered, change, label, reference, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [payment.id, order.id, payment.method, payment.amount, payment.tendered, payment.change,
+          payment.label, payment.reference ?? null, payment.createdAt],
+      );
+    }
+    if (order.tse?.failureReason) {
+      await db.run(
+        "INSERT INTO tse_incident (id, tenant_id, device_id, order_id, occurred_at, reason) VALUES (?,?,?,?,?,?)",
+        [`${order.id}-tse`, order.tenantId, order.deviceId, order.id,
+          order.paidAt ?? order.startedAt, order.tse.failureReason],
+      );
+    }
+  });
+}
+
+interface OrderRow {
+  id: string; tenant_id: string; store_id: string; device_id: string; user_id: string;
+  receipt_number: string; state: string; service_mode: string; total: number; order_discount: number;
+  started_at: string; paid_at: string | null; voids_order_id: string | null; closing_id: string | null;
+  note: string | null; tse_json: string | null;
+}
+
+async function hydrateOrders(db: Db, rows: readonly OrderRow[]): Promise<Order[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((row) => row.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const lineRows = await db.all<{
+    id: string; order_id: string; position: number; product_id: string | null; name: string;
+    quantity: number; unit_price: number; gross: number; tax_key: number; business_case_type: string;
+    discount: number; allocated_discount: number; deposit_for_line_id: string | null;
+    modifiers_json: string; note: string | null;
+  }>(`SELECT * FROM order_line WHERE order_id IN (${placeholders}) ORDER BY order_id, position`, ids);
+  const paymentRows = await db.all<{
+    id: string; order_id: string; method: string; amount: number; tendered: number; change: number;
+    label: string; reference: string | null; created_at: string;
+  }>(`SELECT * FROM order_payment WHERE order_id IN (${placeholders}) ORDER BY order_id, created_at`, ids);
+
+  const linesByOrder = new Map<string, OrderLine[]>();
+  for (const row of lineRows) {
+    const line: OrderLine = {
+      id: row.id, position: row.position, productId: row.product_id, name: row.name,
+      quantity: row.quantity, unitPrice: row.unit_price, gross: row.gross, taxKey: row.tax_key,
+      businessCaseType: row.business_case_type as OrderLine["businessCaseType"],
+      modifiers: JSON.parse(row.modifiers_json) as OrderLine["modifiers"],
+      discount: row.discount, allocatedDiscount: row.allocated_discount,
+      depositForLineId: row.deposit_for_line_id, note: row.note,
+    };
+    const list = linesByOrder.get(row.order_id);
+    if (list) list.push(line);
+    else linesByOrder.set(row.order_id, [line]);
+  }
+
+  const paymentsByOrder = new Map<string, Payment[]>();
+  for (const row of paymentRows) {
+    const payment: Payment = {
+      id: row.id, method: row.method as PaymentMethod, amount: row.amount, tendered: row.tendered,
+      change: row.change, label: row.label, reference: row.reference, createdAt: row.created_at,
+    };
+    const list = paymentsByOrder.get(row.order_id);
+    if (list) list.push(payment);
+    else paymentsByOrder.set(row.order_id, [payment]);
+  }
+
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenant_id, storeId: row.store_id, deviceId: row.device_id,
+    userId: row.user_id, receiptNumber: row.receipt_number, state: row.state as Order["state"],
+    serviceMode: row.service_mode as ServiceMode, lines: linesByOrder.get(row.id) ?? [],
+    payments: paymentsByOrder.get(row.id) ?? [], total: row.total, orderDiscount: row.order_discount,
+    startedAt: row.started_at, paidAt: row.paid_at, voidsOrderId: row.voids_order_id,
+    closingId: row.closing_id, note: row.note,
+    tse: row.tse_json ? (JSON.parse(row.tse_json) as TseTransactionRecord) : null,
+  }));
+}
+
+export async function getOrder(db: Db, orderId: Id): Promise<Order | null> {
+  const row = await db.first<OrderRow>("SELECT * FROM sales_order WHERE id = ?", [orderId]);
+  if (!row) return null;
+  return (await hydrateOrders(db, [row]))[0] ?? null;
+}
+
+/** Belege, die noch zu keinem Kassenabschluss gehoeren. */
+export async function listOpenForClosing(db: Db, deviceId: Id): Promise<Order[]> {
+  const rows = await db.all<OrderRow>(
+    "SELECT * FROM sales_order WHERE device_id = ? AND state = 'PAID' AND closing_id IS NULL ORDER BY receipt_number",
+    [deviceId],
+  );
+  return hydrateOrders(db, rows);
+}
+
+/** Die letzten Belege, fuer die Belegliste und den Nachdruck. */
+export async function listRecentOrders(db: Db, deviceId: Id, limit = 50): Promise<Order[]> {
+  const rows = await db.all<OrderRow>(
+    "SELECT * FROM sales_order WHERE device_id = ? ORDER BY receipt_number DESC LIMIT ?",
+    [deviceId, limit],
+  );
+  return hydrateOrders(db, rows);
+}
+
+// --- Kassenabschluss -----------------------------------------------------
+
+export async function saveClosing(
+  db: Db,
+  closing: Closing,
+  reportJson: string,
+): Promise<void> {
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO closing (id, tenant_id, store_id, device_id, number, from_at, to_at, created_at,
+          user_id, opening_cash, cash_count_json, report_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [closing.id, closing.tenantId, closing.storeId, closing.deviceId, closing.number, closing.from,
+        closing.to, closing.createdAt, closing.userId, closing.openingCash,
+        JSON.stringify(closing.cashCount), reportJson],
+    );
+    // Die Belege dem Abschluss zuordnen. Die Zuordnung ist die einzige
+    // Aenderung, die ein bezahlter Beleg noch erfaehrt - der Trigger im
+    // Schema laesst genau das zu und sonst nichts.
+    for (const orderId of closing.orderIds) {
+      await db.run("UPDATE sales_order SET closing_id = ? WHERE id = ?", [closing.id, orderId]);
+    }
+  });
+}
+
+export async function listClosings(db: Db, deviceId: Id, limit = 30): Promise<{ closing: Closing; reportJson: string }[]> {
+  const rows = await db.all<{
+    id: string; tenant_id: string; store_id: string; device_id: string; number: number;
+    from_at: string; to_at: string; created_at: string; user_id: string; opening_cash: number;
+    cash_count_json: string; report_json: string;
+  }>("SELECT * FROM closing WHERE device_id = ? ORDER BY number DESC LIMIT ?", [deviceId, limit]);
+
+  return rows.map((row) => ({
+    closing: {
+      id: row.id, tenantId: row.tenant_id, storeId: row.store_id, deviceId: row.device_id,
+      number: row.number, from: row.from_at, to: row.to_at, createdAt: row.created_at,
+      userId: row.user_id, openingCash: row.opening_cash,
+      cashCount: JSON.parse(row.cash_count_json) as CashCountEntry[],
+      orderIds: [],
+    },
+    reportJson: row.report_json,
+  }));
+}
+
+/** Bargeldbestand zum Start: Endbestand des letzten Abschlusses. */
+export async function lastCountedCash(db: Db, deviceId: Id): Promise<number> {
+  const row = await db.first<{ cash_count_json: string; opening_cash: number; report_json: string }>(
+    "SELECT cash_count_json, opening_cash, report_json FROM closing WHERE device_id = ? ORDER BY number DESC LIMIT 1",
+    [deviceId],
+  );
+  if (!row) return 0;
+  const counted = JSON.parse(row.cash_count_json) as CashCountEntry[];
+  if (counted.length === 0) return 0;
+  return counted.reduce((sum, entry) => sum + entry.denomination * entry.count, 0);
+}
+
+// --- Outbox --------------------------------------------------------------
+
+export async function loadOutbox(db: Db): Promise<OutboxState> {
+  const rows = await db.all<{
+    key: string; kind: string; entity_id: string; tenant_id: string; payload: string;
+    created_at: string; attempts: number; next_attempt_at: string; last_error: string | null;
+  }>("SELECT * FROM outbox ORDER BY created_at, key");
+  return {
+    entries: rows.map((row) => ({
+      key: row.key, kind: row.kind as OutboxKind, entityId: row.entity_id, tenantId: row.tenant_id,
+      payload: row.payload, createdAt: row.created_at, attempts: row.attempts,
+      nextAttemptAt: row.next_attempt_at, lastError: row.last_error,
+    })),
+  };
+}
+
+export async function persistOutbox(db: Db, state: OutboxState): Promise<void> {
+  await db.transaction(async () => {
+    await db.run("DELETE FROM outbox");
+    for (const entry of state.entries) {
+      await db.run(
+        `INSERT INTO outbox (key, kind, entity_id, tenant_id, payload, created_at, attempts, next_attempt_at, last_error)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [entry.key, entry.kind, entry.entityId, entry.tenantId, entry.payload, entry.createdAt,
+          entry.attempts, entry.nextAttemptAt, entry.lastError],
+      );
+    }
+  });
+}
+
+export async function upsertOutboxEntry(db: Db, entry: OutboxEntry): Promise<void> {
+  await db.run(
+    `INSERT INTO outbox (key, kind, entity_id, tenant_id, payload, created_at, attempts, next_attempt_at, last_error)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, attempts = 0,
+        next_attempt_at = excluded.next_attempt_at, last_error = NULL`,
+    [entry.key, entry.kind, entry.entityId, entry.tenantId, entry.payload, entry.createdAt,
+      entry.attempts, entry.nextAttemptAt, entry.lastError],
+  );
+}
+
+export async function countOutbox(db: Db): Promise<number> {
+  const row = await db.first<{ n: number }>("SELECT COUNT(*) AS n FROM outbox");
+  return row?.n ?? 0;
+}
+
+/** TSE-Ausfaelle, fuer die Ausfalldokumentation und die Anzeige im Status. */
+export async function listTseIncidents(db: Db, limit = 100): Promise<{ occurredAt: string; reason: string; orderId: string | null }[]> {
+  const rows = await db.all<{ occurred_at: string; reason: string; order_id: string | null }>(
+    "SELECT occurred_at, reason, order_id FROM tse_incident ORDER BY occurred_at DESC LIMIT ?",
+    [limit],
+  );
+  return rows.map((row) => ({ occurredAt: row.occurred_at, reason: row.reason, orderId: row.order_id }));
+}
+
+export type { SqlValue };

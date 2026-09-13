@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Kassenpilot",
+    "slug": "kassenpilot",
+    "version": "0.1.0",
+    "orientation": "default",
+    "scheme": "kassenpilot",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "de.example.kassenpilot",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "de.example.kassenpilot",
+      "adaptiveIcon": { "backgroundColor": "#0F172A" }
+    },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}
