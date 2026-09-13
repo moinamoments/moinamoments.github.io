@@ -155,6 +155,7 @@ export async function finishTransaction(
   const totals = cartTotals(cart, {
     smallBusiness: options.smallBusiness ?? context.tenant.smallBusiness,
     ...(options.taxRegistry ? { taxRegistry: options.taxRegistry } : {}),
+    ...(options.deposits ? { deposits: options.deposits } : {}),
   });
 
   const resolvedPayments = resolvePayments(totals.total, payments, context);
@@ -181,6 +182,7 @@ export async function finishTransaction(
     discount: line.discount,
     allocatedDiscount: line.allocatedDiscount,
     note: line.note,
+    depositForLineId: line.depositForLineId ?? null,
   }));
 
   const order: Order = {
@@ -367,6 +369,10 @@ export function buildVoidCart(order: Order): Cart {
       discount: line.discount + line.allocatedDiscount,
       businessCaseType: line.businessCaseType,
       note: `Storno zu Beleg ${order.receiptNumber}`,
+      // Die Pfandpositionen des Originals stehen schon als eigene Zeilen im
+      // Beleg. Wuerde der Storno sie erneut ableiten, stuende das Pfand
+      // doppelt drauf - der Kunde bekaeme zu viel zurueck.
+      waiveDeposit: true,
     })),
   };
 }

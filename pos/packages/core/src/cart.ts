@@ -19,6 +19,7 @@ import {
   lineTotal,
   sumCents,
 } from "./money.ts";
+import { type DepositCatalog, NO_DEPOSITS, depositQuantity } from "./deposit.ts";
 import type { BusinessCaseType, Id, Modifier, OrderLine, Product } from "./model.ts";
 import { type ServiceMode, type TaxGroupTotal, type TaxKey, type TaxRegistry, createTaxRegistry, resolveTaxKey, summarizeTax } from "./tax.ts";
 
@@ -43,6 +44,11 @@ export interface CartLine {
   readonly discount: Cents;
   readonly businessCaseType: BusinessCaseType;
   readonly note: string | null;
+  /**
+   * Pfand fuer diese Position abwaehlen - der Kunde hat seinen eigenen
+   * Becher mitgebracht. Nur so kommt eine Position ohne ihr Pfand aus.
+   */
+  readonly waiveDeposit: boolean;
 }
 
 export interface Cart {
@@ -57,6 +63,11 @@ export interface CartOptions {
   /** Kleinunternehmer nach § 19 UStG - zieht alle Positionen auf steuerfrei. */
   readonly smallBusiness?: boolean;
   readonly taxRegistry?: TaxRegistry;
+  /**
+   * Pfandartikel je Artikel. Ohne Katalog gibt es kein Pfand - die
+   * Summenbildung erfindet keins.
+   */
+  readonly deposits?: DepositCatalog;
 }
 
 export function emptyCart(tenantId: Id, serviceMode: ServiceMode = "TAKEAWAY"): Cart {
@@ -87,6 +98,8 @@ export function addProduct(
     readonly price?: Cents;
     readonly modifiers?: readonly Modifier[];
     readonly note?: string | null;
+    /** Eigener Becher: kein Pfand fuer diese Position. */
+    readonly waiveDeposit?: boolean;
   },
 ): Cart {
   if (product.tenantId !== cart.tenantId) {
@@ -127,6 +140,7 @@ export function addProduct(
     discount: 0,
     businessCaseType: "Umsatz",
     note,
+    waiveDeposit: options.waiveDeposit ?? false,
   };
 
   const mergeIndex = note === null
@@ -137,6 +151,7 @@ export function addProduct(
           line.discount === 0 &&
           line.note === null &&
           line.businessCaseType === "Umsatz" &&
+          line.waiveDeposit === candidate.waiveDeposit &&
           sameModifiers(line.modifiers, modifiers),
       )
     : -1;
@@ -173,8 +188,53 @@ export function addFreeLine(
     discount: 0,
     businessCaseType: line.businessCaseType ?? "Umsatz",
     note: line.note ?? null,
+    // Eine freie Position bringt kein Pfand mit: sie hat keinen Artikel, an
+    // dem eines haengen koennte.
+    waiveDeposit: true,
   };
   return { ...cart, lines: [...cart.lines, newLine] };
+}
+
+/**
+ * Pfandrueckgabe: der Kunde bringt Becher zurueck.
+ *
+ * Eine echte, eigene Position mit negativem Betrag - kein Rabatt und keine
+ * Stornierung eines alten Belegs. Die Ware bleibt verkauft, nur das Pfand
+ * wandert zurueck. Als Geschaeftsvorfallart `PfandRueckzahlung`, damit die
+ * Auswertung Pfandbewegungen von Umsatz trennen kann.
+ */
+export function addDepositReturn(
+  cart: Cart,
+  deposit: { readonly productId: Id; readonly name: string; readonly price: Cents; readonly taxKey: TaxKey; readonly refundable: boolean },
+  options: { readonly id: Id; readonly quantity?: Quantity },
+): Cart {
+  if (!deposit.refundable) {
+    throw new CartError(`"${deposit.name}" wird nicht zurueckgenommen`);
+  }
+  const quantity = options.quantity ?? ONE;
+  if (quantity <= 0) throw new CartError("Rueckgabemenge muss positiv sein");
+
+  const newLine: CartLine = {
+    id: options.id,
+    productId: deposit.productId,
+    name: `${deposit.name} zurueck`,
+    quantity: -quantity,
+    unitPrice: deposit.price,
+    taxKey: deposit.taxKey,
+    taxKeyDineIn: null,
+    modifiers: [],
+    discount: 0,
+    businessCaseType: "PfandRueckzahlung",
+    note: null,
+    waiveDeposit: true,
+  };
+  return { ...cart, lines: [...cart.lines, newLine] };
+}
+
+/** Pfand einer Position abwaehlen oder wieder aufnehmen (eigener Becher). */
+export function setWaiveDeposit(cart: Cart, lineId: Id, waive: boolean): Cart {
+  const index = indexOfLine(cart, lineId);
+  return replaceLine(cart, index, { ...(cart.lines[index] as CartLine), waiveDeposit: waive });
 }
 
 function sameModifiers(a: readonly CartLineModifier[], b: readonly CartLineModifier[]): boolean {
@@ -255,9 +315,16 @@ export function setOrderDiscountPercent(cart: Cart, bp: BasisPoints): Cart {
   return setOrderDiscount(cart, applyBasisPoints(Math.abs(subtotalAfterLineDiscounts(cart)), bp));
 }
 
+/**
+ * Rabattierbare Summe: Warenpositionen nach Positionsrabatten, ohne Pfand.
+ *
+ * Das ist die Bemessungsgrundlage fuer "10 % auf den Beleg". Pfand gehoert
+ * nicht dazu - und damit auch nicht in die Obergrenze, bis zu der ein
+ * Belegrabatt zulaessig ist.
+ */
 function subtotalAfterLineDiscounts(cart: Cart): Cents {
   return sumCents(
-    cart.lines.map((line) => {
+    cart.lines.filter((line) => !isDepositLine(line)).map((line) => {
       const base = lineTotal(effectiveUnitPrice(line), line.quantity);
       return base >= 0 ? base - line.discount : base + line.discount;
     }),
@@ -268,6 +335,22 @@ function subtotalAfterLineDiscounts(cart: Cart): Cents {
 export interface ComputedLine extends Omit<OrderLine, "id" | "position"> {
   readonly lineId: Id;
   readonly position: number;
+}
+
+/**
+ * Pfandsumme eines Belegs, getrennt nach belastet und zurueckgenommen.
+ *
+ * Wird im Kassenabschluss gebraucht: Pfand ist durchlaufendes Geld, kein
+ * Warenumsatz. Wer beides in einer Zahl fuehrt, liest am Monatsende einen
+ * Umsatz, den es nicht gab.
+ */
+export interface DepositTotals {
+  /** Beim Verkauf berechnetes Pfand. */
+  readonly charged: Cents;
+  /** An Kunden zurueckgezahltes Pfand, als negativer Betrag. */
+  readonly refunded: Cents;
+  /** Saldo: was netto an Pfand in der Kasse geblieben ist. */
+  readonly balance: Cents;
 }
 
 export interface CartTotals {
@@ -284,6 +367,17 @@ export interface CartTotals {
   /** Enthaltene Umsatzsteuer ueber alle Saetze. */
   readonly taxTotal: Cents;
   readonly itemCount: Quantity;
+  readonly deposits: DepositTotals;
+}
+
+interface BaseEntry {
+  readonly line: CartLine;
+  readonly raw: Cents;
+  readonly afterDiscount: Cents;
+  /** Pfandpositionen: abgeleitet, nicht vom Bediener erfasst. */
+  readonly derived: boolean;
+  /** Id der Warenposition, an der eine Pfandposition haengt. */
+  readonly depositForLineId: Id | null;
 }
 
 /**
@@ -292,29 +386,65 @@ export interface CartTotals {
  * Reihenfolge, und die ist nicht beliebig:
  * 1. Positionswert = Einzelpreis inkl. Zusaetze mal Menge, auf Cent gerundet
  * 2. minus Positionsrabatt
- * 3. Belegrabatt anteilig auf die Positionen umlegen (ohne Cent-Verlust)
- * 4. Steuer je Steuersatz auf der Summe der so entstandenen Positionsbrutti
+ * 3. Pfandpositionen aus den Warenpositionen ableiten
+ * 4. Belegrabatt anteilig auf die Warenpositionen umlegen (ohne Cent-Verlust)
+ * 5. Steuer je Steuersatz auf der Summe der so entstandenen Positionsbrutti
  *
- * Schritt 3 muss vor Schritt 4 kommen: ein Belegrabatt mindert die
+ * Schritt 4 muss vor Schritt 5 kommen: ein Belegrabatt mindert die
  * Umsatzsteuer, und zwar in dem Verhaeltnis, in dem die Steuersaetze am
  * Beleg beteiligt sind.
+ *
+ * Pfand bleibt in Schritt 4 aussen vor. "10 % auf alles" heisst nicht
+ * "10 % weniger Pfand": das Pfand ist der Betrag, den der Kunde bei
+ * Rueckgabe wiederbekommt, und den kann ein Rabatt nicht kleiner machen.
  */
 export function cartTotals(cart: Cart, options: CartOptions = {}): CartTotals {
   const registry = options.taxRegistry ?? createTaxRegistry();
   const smallBusiness = options.smallBusiness ?? false;
+  const deposits = options.deposits ?? NO_DEPOSITS;
 
-  const base = cart.lines.map((line) => {
+  const base: BaseEntry[] = [];
+  for (const line of cart.lines) {
     const raw = lineTotal(effectiveUnitPrice(line), line.quantity);
     const afterDiscount = raw >= 0 ? raw - line.discount : raw + line.discount;
-    return { line, raw, afterDiscount };
-  });
+    base.push({ line, raw, afterDiscount, derived: false, depositForLineId: null });
+
+    if (line.waiveDeposit || line.productId == null) continue;
+    for (const item of deposits.for(line.productId)) {
+      const quantity = depositQuantity(line.quantity);
+      const depositGross = lineTotal(item.price, quantity);
+      base.push({
+        line: {
+          // Eine abgeleitete Id, damit die Position im Beleg eindeutig ist
+          // und ein Nachdruck dieselben Ids ergibt.
+          id: `${line.id}:pfand:${item.productId}`,
+          productId: item.productId,
+          name: item.name,
+          quantity,
+          unitPrice: item.price,
+          taxKey: item.taxKey,
+          taxKeyDineIn: null,
+          modifiers: [],
+          discount: 0,
+          businessCaseType: "Pfand",
+          note: null,
+          waiveDeposit: true,
+        },
+        raw: depositGross,
+        afterDiscount: depositGross,
+        derived: true,
+        depositForLineId: line.id,
+      });
+    }
+  }
 
   const subtotal = sumCents(base.map((b) => b.raw));
   const lineDiscountTotal = sumCents(cart.lines.map((l) => l.discount));
 
   const allocation = distribute(
     cart.orderDiscount,
-    base.map((b) => Math.abs(b.afterDiscount)),
+    // Pfand mit Gewicht 0: es nimmt am Belegrabatt nicht teil.
+    base.map((b) => (isDepositEntry(b) ? 0 : Math.abs(b.afterDiscount))),
   );
 
   const lines: ComputedLine[] = base.map((b, index) => {
@@ -338,6 +468,7 @@ export function cartTotals(cart: Cart, options: CartOptions = {}): CartTotals {
       discount: b.line.discount,
       allocatedDiscount: allocated,
       note: b.line.note,
+      depositForLineId: b.depositForLineId,
     };
   });
 
@@ -345,6 +476,9 @@ export function cartTotals(cart: Cart, options: CartOptions = {}): CartTotals {
     lines.map((line) => ({ taxKey: line.taxKey, gross: line.gross })),
     registry,
   );
+
+  const charged = sumCents(lines.filter((l) => l.businessCaseType === "Pfand").map((l) => l.gross));
+  const refunded = sumCents(lines.filter((l) => l.businessCaseType === "PfandRueckzahlung").map((l) => l.gross));
 
   return {
     lines,
@@ -354,6 +488,20 @@ export function cartTotals(cart: Cart, options: CartOptions = {}): CartTotals {
     total: sumCents(lines.map((l) => l.gross)),
     taxGroups,
     taxTotal: sumCents(taxGroups.map((g) => g.tax)),
-    itemCount: cart.lines.reduce((sum, line) => sum + line.quantity, 0),
+    itemCount: cart.lines.reduce((sum, line) => sum + (isDepositLine(line) ? 0 : line.quantity), 0),
+    deposits: { charged, refunded, balance: charged + refunded },
   };
+}
+
+function isDepositEntry(entry: BaseEntry): boolean {
+  return entry.derived || isDepositLine(entry.line);
+}
+
+function isDepositLine(line: Pick<CartLine, "businessCaseType">): boolean {
+  return line.businessCaseType === "Pfand" || line.businessCaseType === "PfandRueckzahlung";
+}
+
+/** Trennt Warenpositionen von Pfandpositionen, z. B. fuer die Anzeige. */
+export function isDeposit(line: Pick<ComputedLine, "businessCaseType">): boolean {
+  return line.businessCaseType === "Pfand" || line.businessCaseType === "PfandRueckzahlung";
 }

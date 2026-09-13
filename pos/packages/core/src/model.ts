@@ -105,6 +105,33 @@ export interface User {
 
 // --- Artikelstamm ---------------------------------------------------------
 
+/**
+ * Art des Pfands.
+ *
+ * `REUSABLE` ist Mehrwegpfand (Becher, Deckel, Kiste): der Kunde bekommt es
+ * bei Rueckgabe zurueck. `ONE_WAY` ist Einwegpfand nach VerpackG auf Flaschen
+ * und Dosen.
+ *
+ * Steuerlich sind die beiden nicht gleich zu behandeln, und die Behandlung
+ * hat sich in den vergangenen Jahren geaendert. Deshalb wird der Steuersatz
+ * *nicht* hier festgeschrieben, sondern wie bei jedem anderen Artikel am
+ * Pfandartikel gepflegt (`Product.taxKey`). Der Vorbelegung liegt die
+ * ueberwiegende Praxis zugrunde - den Regelsteuersatz fuer Mehrwegpfand -,
+ * die Entscheidung gehoert aber in jedem Fall zum Steuerberater des
+ * Mandanten. Siehe docs/RECHTLICHES.md.
+ */
+export type DepositKind = "REUSABLE" | "ONE_WAY";
+
+export interface DepositInfo {
+  readonly kind: DepositKind;
+  /**
+   * Nimmt der Betrieb dieses Pfand zurueck? Mehrwegpfand ja. Einwegpfand
+   * nimmt nur zurueck, wer auch entsprechende Getraenke verkauft
+   * (Ruecknahmepflicht nach § 31 VerpackG).
+   */
+  readonly refundable: boolean;
+}
+
 export interface Category {
   readonly id: Id;
   readonly tenantId: Id;
@@ -138,8 +165,18 @@ export interface Product {
   sku?: string | null;
   /** Verkaufseinheit. `PIECE` zaehlt Stueck, `KILOGRAM` wiegt. */
   unit: "PIECE" | "KILOGRAM" | "LITRE" | "HOUR";
-  /** Pfand, das beim Verkauf automatisch als eigene Position gebucht wird. */
-  depositProductId?: Id | null;
+  /**
+   * Pfandartikel, die beim Verkauf automatisch mitgebucht werden - in der
+   * Reihenfolge, in der sie auf dem Bon stehen sollen. Mehrere sind der
+   * Normalfall: ein Kaffee zum Mitnehmen bringt Becher *und* Deckel mit.
+   */
+  depositProductIds?: readonly Id[] | null;
+  /**
+   * Gesetzt, wenn dieser Artikel selbst ein Pfandartikel ist (Becher,
+   * Deckel, Kiste). Pfandartikel werden nicht als Kachel angeboten, sondern
+   * ueber den Artikel gebucht, an dem sie haengen.
+   */
+  deposit?: DepositInfo | null;
   color?: string | null;
   sortOrder: number;
   active: boolean;
@@ -210,6 +247,12 @@ export interface OrderLine {
   readonly businessCaseType: BusinessCaseType;
   /** Gewaehlte Zusaetze, bereits in `gross` eingerechnet. */
   readonly modifiers: readonly { readonly name: string; readonly priceDelta: Cents }[];
+  /**
+   * Bei einer Pfandposition die Id der Position, zu der sie gehoert. Damit
+   * kann der Bon das Pfand unter dem Artikel einruecken, und eine Auswertung
+   * kann Pfand vom Warenumsatz trennen.
+   */
+  readonly depositForLineId?: Id | null;
   /** Positionsrabatt in Cent, positiv angegeben. */
   readonly discount: Cents;
   /** Anteil eines Belegrabatts, der auf diese Position umgelegt wurde. */
