@@ -272,11 +272,13 @@ test("Storno hebt den Beleg auf den Cent genau auf", async () => {
   }
 });
 
-test("Storno eines nicht bezahlten Belegs ist nicht moeglich", () => {
-  assert.throws(
-    () => buildVoidCart({ ...({} as never), state: "OPEN", lines: [], tenantId: "t1", serviceMode: "TAKEAWAY" } as never),
-    OrderError,
-  );
+test("Storno eines nicht bezahlten Belegs ist nicht moeglich", async () => {
+  const ctx = context();
+  const open = await beginTransaction(ctx);
+  const cart = addProduct(emptyCart(tenant.id), crepe, { id: "l1" });
+  const { order } = await finishTransaction(ctx, open, cart, [{ method: "CASH", amount: 450 }], { sequence: 1 });
+  assert.throws(() => buildVoidCart({ ...order, state: "OPEN" }), OrderError);
+  assert.throws(() => buildVoidCart({ ...order, state: "VOIDED" }), OrderError);
 });
 
 test("Stornobeleg laeuft als eigener Beleg durch die TSE", async () => {
