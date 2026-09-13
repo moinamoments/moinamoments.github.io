@@ -94,7 +94,24 @@ export interface User {
   readonly id: Id;
   readonly tenantId: Id;
   name: string;
+  /**
+   * Rolle als Voreinstellung der Rechte. Was sie im Einzelnen bedeutet, steht
+   * in permissions.ts.
+   */
   role: UserRole;
+  /**
+   * Einzelne Rechte, die von der Rolle abweichen.
+   *
+   * `true` erteilt ein Recht zusaetzlich, `false` nimmt eines weg. Damit laesst
+   * sich genau der haeufige Fall abbilden, fuer den eine Rolle allein nicht
+   * reicht: ein Mitarbeiter, der die Artikel pflegen darf, aber weiterhin
+   * nicht stornieren. Ohne Abweichung bleibt die Rolle unveraendert wirksam -
+   * ein leeres Objekt ist der Normalfall.
+   *
+   * Der Schluessel ist eine `Capability` aus permissions.ts; hier als Zeichen-
+   * kette getippt, damit das Datenmodell nicht von der Rechteliste abhaengt.
+   */
+  permissionOverrides?: Readonly<Record<string, boolean>> | null;
   /**
    * Nur der Hash der Anmelde-PIN wird gespeichert, nie die PIN selbst -
    * auch nicht lokal auf dem Geraet.
