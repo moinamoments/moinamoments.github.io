@@ -358,7 +358,9 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
   pointer-events: none; transition: border-color .3s;
 }
 .gallery button:hover::after { border-color: var(--gold); }
-/* Großes Hauptbild links, zwei breite Banner rechts, darunter eine Reihe Miniaturen */
+/* Erstes Bild groß (2x2), die übrigen als quadratische Kacheln daneben.
+   Bei fünf Bildern ergibt das einen geschlossenen Block. Optional kann eine
+   Kachel mit class="is-wide" zwei Spalten breit werden (Querformat 2:1). */
 .gallery button:first-child { grid-column: span 2; grid-row: span 2; }
 .gallery button.is-wide { grid-column: span 2; }
 .gallery button.is-wide img { aspect-ratio: 2 / 1; }
