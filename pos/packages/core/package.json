@@ -1,0 +1,17 @@
+{
+  "name": "@kp/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plattformunabhaengige Domaenenlogik des Kassensystems: Geld, Steuern, Warenkorb, Beleg, TSE, DSFinV-K",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

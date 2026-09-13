@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+.env
+.env.local
+# Build-Artefakte der Expo-Builds
+android/
+ios/
+*.apk
+*.aab
+*.ipa
+# lokale Exporte (enthalten Umsatzdaten)
+export/
