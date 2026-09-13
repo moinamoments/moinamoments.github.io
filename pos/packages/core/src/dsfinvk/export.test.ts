@@ -24,7 +24,7 @@ const device: Device = {
 function base(over: Partial<Product>): Product {
   return { id: "x", tenantId: "t1", categoryId: "c1", name: "x", price: 0, taxKey: 1, unit: "PIECE", sortOrder: 1, active: true, updatedAt: "x", ...over };
 }
-const becher = base({ id: "d-becher", name: "Mehrwegbecher", price: 100, deposit: { kind: "REUSABLE", refundable: true } });
+const becher = base({ id: "d-becher", name: "Becher", price: 100, isDeposit: true });
 const kaffee = base({ id: "p-kaffee", name: "Cafe Crema", price: 250, depositProductIds: ["d-becher"] });
 const crepe = base({ id: "p-crepe", name: 'Crepe "Hausgemacht"', price: 450, taxKey: 2, taxKeyDineIn: 1 });
 const deposits = createDepositCatalog([becher, kaffee, crepe]);
@@ -177,7 +177,7 @@ test("lines traegt Positionen mit Menge, Einzelpreis und Inhaus-Kennzeichen", as
   assert.equal(rows.length, 3, "Kaffee, Becherpfand, Crepe");
   assert.deepEqual(rows.map((r) => [r[4], r[6], r[8], r[10], r[17], r[20]]), [
     ["1", "Cafe Crema", "Umsatz", "0", "2.000", "2.50"],
-    ["2", "Mehrwegbecher", "Pfand", "0", "2.000", "1.00"],
+    ["2", "Becher", "Pfand", "0", "2.000", "1.00"],
     ["1", 'Crepe "Hausgemacht"', "Umsatz", "0", "1.000", "4.50"],
   ]);
 });

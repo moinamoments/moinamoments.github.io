@@ -205,11 +205,11 @@ export function addFreeLine(
  */
 export function addDepositReturn(
   cart: Cart,
-  deposit: { readonly productId: Id; readonly name: string; readonly price: Cents; readonly taxKey: TaxKey; readonly refundable: boolean },
+  deposit: { readonly productId: Id; readonly name: string; readonly price: Cents; readonly taxKey: TaxKey },
   options: { readonly id: Id; readonly quantity?: Quantity },
 ): Cart {
-  if (!deposit.refundable) {
-    throw new CartError(`"${deposit.name}" wird nicht zurueckgenommen`);
+  if (deposit.price <= 0) {
+    throw new CartError(`"${deposit.name}" hat keinen Pfandbetrag, den man zurueckgeben koennte`);
   }
   const quantity = options.quantity ?? ONE;
   if (quantity <= 0) throw new CartError("Rueckgabemenge muss positiv sein");

@@ -106,40 +106,47 @@ export interface User {
 // --- Artikelstamm ---------------------------------------------------------
 
 /**
- * Art des Pfands.
+ * Warengruppe. Beliebig tief verschachtelbar.
  *
- * `REUSABLE` ist Mehrwegpfand (Becher, Deckel, Kiste): der Kunde bekommt es
- * bei Rueckgabe zurueck. `ONE_WAY` ist Einwegpfand nach VerpackG auf Flaschen
- * und Dosen.
- *
- * Steuerlich sind die beiden nicht gleich zu behandeln, und die Behandlung
- * hat sich in den vergangenen Jahren geaendert. Deshalb wird der Steuersatz
- * *nicht* hier festgeschrieben, sondern wie bei jedem anderen Artikel am
- * Pfandartikel gepflegt (`Product.taxKey`). Der Vorbelegung liegt die
- * ueberwiegende Praxis zugrunde - den Regelsteuersatz fuer Mehrwegpfand -,
- * die Entscheidung gehoert aber in jedem Fall zum Steuerberater des
- * Mandanten. Siehe docs/RECHTLICHES.md.
+ * `parentId === null` ist eine Gruppe der obersten Ebene. Eine Gruppe kann
+ * gleichzeitig Untergruppen und Artikel enthalten - am Verkaufsstand ist
+ * "Getraenke > Kaffee" neben einem direkt unter "Getraenke" liegenden Artikel
+ * der Normalfall, und ein Modell, das das verbietet, zwingt zu
+ * Alibi-Untergruppen.
  */
-export type DepositKind = "REUSABLE" | "ONE_WAY";
-
-export interface DepositInfo {
-  readonly kind: DepositKind;
-  /**
-   * Nimmt der Betrieb dieses Pfand zurueck? Mehrwegpfand ja. Einwegpfand
-   * nimmt nur zurueck, wer auch entsprechende Getraenke verkauft
-   * (Ruecknahmepflicht nach § 31 VerpackG).
-   */
-  readonly refundable: boolean;
-}
-
 export interface Category {
   readonly id: Id;
   readonly tenantId: Id;
   name: string;
+  /** Uebergeordnete Gruppe; `null` fuer die oberste Ebene. */
+  parentId?: Id | null;
   /** Farbe der Kacheln, damit der Kassenbildschirm ohne Lesen bedienbar ist. */
   color?: string | null;
   sortOrder: number;
   active: boolean;
+}
+
+/**
+ * Herkunft und Lizenz eines Artikelbildes.
+ *
+ * Ein Bild ohne diese Angaben ist nicht verwendbar: freie Lizenzen wie
+ * CC BY und CC BY-SA verlangen die Nennung von Urheber, Lizenz und Quelle.
+ * Deshalb sind die Felder nicht optional angehaengt, sondern Teil des Bildes -
+ * ein Bild ohne Lizenzangabe kann gar nicht erst gespeichert werden.
+ */
+export interface ProductImage {
+  /** Adresse des Bildes. */
+  readonly url: string;
+  /** Kurzbezeichnung der Lizenz, z. B. `CC BY 4.0`, `CC0`, `Eigenes Foto`. */
+  readonly license: string;
+  /** Adresse des Lizenztextes, soweit vorhanden. */
+  readonly licenseUrl?: string | null;
+  /** Urheber, wie er genannt werden will. */
+  readonly creator?: string | null;
+  /** Seite, auf der das Bild gefunden wurde - Teil der Namensnennung. */
+  readonly sourceUrl?: string | null;
+  /** Dienst, der das Bild geliefert hat, z. B. `openverse`. */
+  readonly provider?: string | null;
 }
 
 /**
@@ -172,15 +179,76 @@ export interface Product {
    */
   depositProductIds?: readonly Id[] | null;
   /**
-   * Gesetzt, wenn dieser Artikel selbst ein Pfandartikel ist (Becher,
-   * Deckel, Kiste). Pfandartikel werden nicht als Kachel angeboten, sondern
-   * ueber den Artikel gebucht, an dem sie haengen.
+   * Gesetzt, wenn dieser Artikel ein Pfandartikel ist - Becher, Deckel,
+   * Kiste, Flasche, was der Betrieb eben braucht. Pfandartikel werden nicht
+   * als Kachel angeboten, sondern ueber den Artikel gebucht, an dem sie
+   * haengen, und ueber den Ruecknahmebildschirm zurueckgenommen.
+   *
+   * Es gibt keine festen Pfandarten: ein Mandant legt beliebig viele
+   * Pfandartikel mit beliebigem Betrag an. Welcher Steuersatz darauf
+   * gehoert, steht wie bei jedem Artikel in `taxKey` und gehoert einmal mit
+   * dem Steuerberater geklaert (siehe docs/RECHTLICHES.md).
    */
-  deposit?: DepositInfo | null;
+  isDeposit?: boolean;
   color?: string | null;
+  /** Artikelbild samt Lizenzangabe. */
+  image?: ProductImage | null;
+  /**
+   * Bestandsfuehrung fuer diesen Artikel eingeschaltet?
+   *
+   * Bewusst je Artikel: fuer einen Crepe, der aus Teig entsteht, ist ein
+   * Stueckbestand sinnlos, fuer eine Flasche Limonade ist er das Wichtigste.
+   * Ein Kassensystem, das beides gleich behandelt, erzeugt entweder unsinnige
+   * Warnungen oder gar keine.
+   */
+  trackStock?: boolean;
+  /** Bestand in Tausendsteln der Verkaufseinheit, wie `Quantity`. */
+  stock?: Quantity;
+  /** Ab diesem Bestand warnt die Kasse. `null` = keine Warnung. */
+  lowStockThreshold?: Quantity | null;
   sortOrder: number;
   active: boolean;
   updatedAt: Timestamp;
+}
+
+/** Grund einer Bestandsbewegung. */
+export type StockMovementReason =
+  /** Verkauf ueber die Kasse. */
+  | "SALE"
+  /** Storno eines Verkaufs - Ware kommt zurueck in den Bestand. */
+  | "VOID"
+  /** Wareneingang. */
+  | "PURCHASE"
+  /** Korrektur nach Zaehlung (Inventur). */
+  | "COUNT"
+  /** Schwund, Bruch, Verderb. */
+  | "LOSS"
+  /** Eigenverbrauch, Personalverzehr, Probe. */
+  | "OWN_USE";
+
+/**
+ * Eine Bestandsbewegung.
+ *
+ * Bestaende werden nicht einfach ueberschrieben, sondern fortgeschrieben:
+ * jede Aenderung ist eine Zeile mit Grund, Zeitpunkt und Bediener. Nur so ist
+ * hinterher zu klaeren, warum von zwanzig Flaschen nur noch zwoelf da sind -
+ * und ein blosser Zahlenstand im Artikel kann das nie beantworten.
+ */
+export interface StockMovement {
+  readonly id: Id;
+  readonly tenantId: Id;
+  readonly storeId: Id;
+  readonly productId: Id;
+  /** Veraenderung in Tausendsteln; negativ bei Abgang. */
+  readonly quantity: Quantity;
+  /** Bestand nach dieser Bewegung - macht das Journal ohne Nachrechnen lesbar. */
+  readonly resultingStock: Quantity;
+  readonly reason: StockMovementReason;
+  /** Beleg, der die Bewegung ausgeloest hat, bei Verkauf und Storno. */
+  readonly orderId?: Id | null;
+  readonly userId: Id;
+  readonly note?: string | null;
+  readonly createdAt: Timestamp;
 }
 
 /**

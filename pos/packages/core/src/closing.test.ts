@@ -26,7 +26,7 @@ function base(over: Partial<Product>): Product {
     sortOrder: 1, active: true, updatedAt: "2026-09-01T00:00:00+02:00", ...over,
   };
 }
-const becher = base({ id: "d-becher", name: "Mehrwegbecher", price: 100, taxKey: 1, deposit: { kind: "REUSABLE", refundable: true } });
+const becher = base({ id: "d-becher", name: "Becher", price: 100, taxKey: 1, isDeposit: true });
 const kaffee = base({ id: "p-kaffee", name: "Cafe Crema", price: 250, taxKey: 1, depositProductIds: ["d-becher"] });
 const crepe = base({ id: "p-crepe", name: "Crepe", price: 450, taxKey: 2, taxKeyDineIn: 1 });
 const deposits = createDepositCatalog([becher, kaffee, crepe]);
@@ -59,7 +59,7 @@ async function makeOrders(): Promise<{ orders: Order[]; ctx: TransactionContext 
   // 1 Crepe Karte (4,50)
   await sell((c) => addProduct(c, crepe, { id: "l1" }), "CARD_DEBIT");
   // 1 Becher zurueck, bar (-1,00)
-  await sell((c) => addDepositReturn(c, { productId: becher.id, name: becher.name, price: 100, taxKey: 1, refundable: true }, { id: "r1" }), "CASH");
+  await sell((c) => addDepositReturn(c, { productId: becher.id, name: becher.name, price: 100, taxKey: 1 }, { id: "r1" }), "CASH");
   return { orders, ctx };
 }
 

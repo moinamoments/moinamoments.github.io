@@ -36,10 +36,10 @@ function base(over: Partial<Product>): Product {
 }
 
 // Pfandartikel: Mehrwegbecher 1,00 EUR, Deckel 0,30 EUR, Einwegflasche 0,25 EUR.
-const becher = base({ id: "d-becher", name: "Mehrwegbecher", price: 100, taxKey: 1, deposit: { kind: "REUSABLE", refundable: true } });
-const deckel = base({ id: "d-deckel", name: "Deckel", price: 30, taxKey: 1, deposit: { kind: "REUSABLE", refundable: true } });
-const einweg = base({ id: "d-einweg", name: "Einwegpfand", price: 25, taxKey: 1, deposit: { kind: "ONE_WAY", refundable: true } });
-const schale = base({ id: "d-schale", name: "Mehrwegschale", price: 200, taxKey: 1, deposit: { kind: "REUSABLE", refundable: true } });
+const becher = base({ id: "d-becher", name: "Becher", price: 100, taxKey: 1, isDeposit: true });
+const deckel = base({ id: "d-deckel", name: "Deckel", price: 30, taxKey: 1, isDeposit: true });
+const einweg = base({ id: "d-einweg", name: "Flaschenpfand", price: 25, taxKey: 1, isDeposit: true });
+const schale = base({ id: "d-schale", name: "Schale", price: 200, taxKey: 1, isDeposit: true });
 
 const kaffee = base({ id: "p-kaffee", name: "Cafe Crema", price: 250, taxKey: 1, depositProductIds: ["d-becher", "d-deckel"] });
 const crepe = base({ id: "p-crepe", name: "Crepe", price: 450, taxKey: 2, taxKeyDineIn: 1 });
@@ -57,7 +57,7 @@ test("Kaffee bringt Becher und Deckel automatisch mit", () => {
     totals.lines.map((l) => [l.name, l.gross, l.businessCaseType]),
     [
       ["Cafe Crema", 250, "Umsatz"],
-      ["Mehrwegbecher", 100, "Pfand"],
+      ["Becher", 100, "Pfand"],
       ["Deckel", 30, "Pfand"],
     ],
   );
@@ -144,7 +144,7 @@ test("Pfandrueckgabe ist eine eigene negative Position", () => {
   const totals = cartTotals(cart, options);
   assert.equal(totals.total, -300);
   assert.equal(totals.lines[0]?.businessCaseType, "PfandRueckzahlung");
-  assert.equal(totals.lines[0]?.name, "Mehrwegbecher zurueck");
+  assert.equal(totals.lines[0]?.name, "Becher zurueck");
   assert.equal(totals.deposits.refunded, -300);
   assert.equal(totals.deposits.balance, -300);
 });
@@ -159,12 +159,10 @@ test("Verkauf und Rueckgabe im selben Beleg saldieren", () => {
   assert.equal(totals.deposits.balance, 30);
 });
 
-test("nicht ruecknehmbares Pfand wird nicht zurueckgenommen", () => {
-  assert.throws(
-    () => addDepositReturn(emptyCart(TENANT), { ...becherItem(), refundable: false }, { id: "r1" }),
-    CartError,
-  );
+test("Ruecknahme braucht einen Betrag und eine positive Menge", () => {
+  assert.throws(() => addDepositReturn(emptyCart(TENANT), { ...becherItem(), price: 0 }, { id: "r1" }), CartError);
   assert.throws(() => addDepositReturn(emptyCart(TENANT), becherItem(), { id: "r1", quantity: 0 }), CartError);
+  assert.throws(() => addDepositReturn(emptyCart(TENANT), becherItem(), { id: "r1", quantity: -1000 }), CartError);
 });
 
 test("Pfandrueckgabe nimmt nicht am Belegrabatt teil", () => {
@@ -175,7 +173,7 @@ test("Pfandrueckgabe nimmt nicht am Belegrabatt teil", () => {
   assert.equal(cartTotals(cart, options).total, 450 - 45 - 100);
 });
 
-test("Einwegpfand haengt genauso am Artikel", () => {
+test("Flaschenpfand haengt genauso am Artikel", () => {
   const cart = addProduct(emptyCart(TENANT), cola, { id: "l1", quantity: 6 * ONE });
   const totals = cartTotals(cart, options);
   assert.equal(totals.deposits.charged, 150);
@@ -204,7 +202,7 @@ test("depositQuantity rundet auf ganze Einheiten auf", () => {
 });
 
 test("Pfand traegt seinen eigenen Steuersatz, unabhaengig von der Ware", () => {
-  // Crepe ausser Haus 7 %, Mehrwegschale 19 %.
+  // Crepe ausser Haus 7 %, Schale 19 %.
   const withDeposit = base({ ...crepe, id: "p-crepe-schale", depositProductIds: ["d-schale"] });
   const localCatalog = createDepositCatalog([schale, withDeposit]);
   const cart = addProduct(emptyCart(TENANT), withDeposit, { id: "l1" });
@@ -239,7 +237,7 @@ test("Katalog meldet fehlerhafte Verweise sofort", () => {
   );
   // Pfandartikel ohne Betrag.
   assert.throws(
-    () => createDepositCatalog([base({ id: "d", name: "Becher", price: null, deposit: { kind: "REUSABLE", refundable: true } })]),
+    () => createDepositCatalog([base({ id: "d", name: "Becher", price: null, isDeposit: true })]),
     DepositError,
   );
   // Pfand auf Pfand.
@@ -247,17 +245,33 @@ test("Katalog meldet fehlerhafte Verweise sofort", () => {
     () =>
       createDepositCatalog([
         becher,
-        base({ id: "d2", name: "Deckel", price: 30, deposit: { kind: "REUSABLE", refundable: true }, depositProductIds: ["d-becher"] }),
+        base({ id: "d2", name: "Deckel", price: 30, isDeposit: true, depositProductIds: ["d-becher"] }),
       ]),
     DepositError,
   );
 });
 
-test("Katalog listet die ruecknehmbaren Pfandarten fuer den Ruecknahmebildschirm", () => {
-  const nonRefundable = base({ id: "d-nr", name: "Einwegbecher", price: 10, deposit: { kind: "ONE_WAY", refundable: false } });
-  const localCatalog = createDepositCatalog([becher, deckel, einweg, nonRefundable]);
-  assert.deepEqual(localCatalog.refundable().map((d) => d.name), ["Mehrwegbecher", "Deckel", "Einwegpfand"]);
+test("Katalog listet alle Pfandartikel fuer den Ruecknahmebildschirm", () => {
+  const localCatalog = createDepositCatalog([becher, deckel, einweg, schale]);
+  assert.deepEqual(localCatalog.all().map((d) => d.name), ["Becher", "Deckel", "Flaschenpfand", "Schale"]);
   assert.deepEqual(localCatalog.for("unbekannt"), []);
+});
+
+test("beliebig viele Pfandartikel mit beliebigem Betrag", () => {
+  // Kein Kassenhersteller kennt die Gebinde eines Betriebs. Also muss der
+  // Betrieb sie anlegen koennen - ohne Obergrenze und ohne vorgegebene Arten.
+  const eigene = Array.from({ length: 12 }, (_, index) =>
+    base({ id: `d-${index}`, name: `Pfand ${index}`, price: (index + 1) * 5, isDeposit: true }),
+  );
+  const ware = base({ id: "p-set", name: "Set", price: 900, depositProductIds: eigene.map((d) => d.id) });
+  const localCatalog = createDepositCatalog([...eigene, ware]);
+  assert.equal(localCatalog.all().length, 12);
+  assert.equal(localCatalog.for("p-set").length, 12);
+
+  const totals = cartTotals(addProduct(emptyCart(TENANT), ware, { id: "l1" }), { deposits: localCatalog });
+  // 5 + 10 + ... + 60 Cent
+  assert.equal(totals.deposits.charged, 390);
+  assert.equal(totals.total, 900 + 390);
 });
 
 test("Pfandposition hat eine stabile, ableitbare Id", () => {
@@ -269,5 +283,5 @@ test("Pfandposition hat eine stabile, ableitbare Id", () => {
 });
 
 function becherItem() {
-  return { productId: becher.id, name: becher.name, price: 100, taxKey: 1, refundable: true };
+  return { productId: becher.id, name: becher.name, price: 100, taxKey: 1 };
 }

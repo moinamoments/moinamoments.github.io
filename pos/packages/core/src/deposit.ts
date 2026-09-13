@@ -1,10 +1,10 @@
 /**
  * Pfand.
  *
- * Becher, Deckel, Kisten, Einwegflaschen. Am Imbiss ist Pfand kein Randfall:
- * seit der Mehrwegangebotspflicht (§§ 33 f. VerpackG) muss ein Betrieb, der
- * Getraenke oder Speisen in Einwegkunststoff zum Mitnehmen verkauft, eine
- * Mehrwegalternative anbieten - und die laeuft praktisch immer ueber Pfand.
+ * Becher, Deckel, Kisten, Flaschen - was der Betrieb an Pfand fuehrt, legt er
+ * selbst an: beliebig viele Pfandartikel mit beliebigem Betrag. Es gibt keine
+ * eingebauten Pfandarten, weil kein Kassenhersteller wissen kann, welche
+ * Gebinde ein Betrieb verwendet.
  *
  * Die zentrale Entscheidung dieses Moduls: **Pfandpositionen werden nicht
  * gespeichert, sondern abgeleitet.** Sie entstehen bei jeder Summenbildung neu
@@ -25,7 +25,7 @@
 
 import type { Cents, Quantity } from "./money.ts";
 import { ONE } from "./money.ts";
-import type { DepositKind, Id, Product } from "./model.ts";
+import type { Id, Product } from "./model.ts";
 import type { TaxKey } from "./tax.ts";
 
 export class DepositError extends Error {}
@@ -37,16 +37,14 @@ export interface DepositItem {
   /** Pfandbetrag brutto in Cent, immer positiv. */
   readonly price: Cents;
   readonly taxKey: TaxKey;
-  readonly kind: DepositKind;
-  readonly refundable: boolean;
 }
 
 /** Nachschlagewerk: welcher Artikel bringt welches Pfand mit? */
 export interface DepositCatalog {
   /** Pfandartikel eines Artikels, in Bonreihenfolge. Leer, wenn keins. */
   for(productId: Id): readonly DepositItem[];
-  /** Alle ruecknehmbaren Pfandartikel, fuer den Ruecknahmebildschirm. */
-  refundable(): readonly DepositItem[];
+  /** Alle Pfandartikel des Mandanten, fuer den Ruecknahmebildschirm. */
+  all(): readonly DepositItem[];
 }
 
 /**
@@ -64,27 +62,25 @@ export function createDepositCatalog(products: readonly Product[]): DepositCatal
   const allDeposits = new Map<Id, DepositItem>();
 
   const toItem = (product: Product): DepositItem => {
-    if (!product.deposit) throw new DepositError(`Artikel "${product.name}" ist kein Pfandartikel`);
+    if (!product.isDeposit) throw new DepositError(`Artikel "${product.name}" ist kein Pfandartikel`);
     if (product.price == null) throw new DepositError(`Pfandartikel "${product.name}" braucht einen festen Betrag`);
-    if (product.price < 0) throw new DepositError(`Pfandbetrag von "${product.name}" muss positiv sein`);
+    if (product.price <= 0) throw new DepositError(`Pfandbetrag von "${product.name}" muss groesser als null sein`);
     return {
       productId: product.id,
       name: product.name,
       price: product.price,
       taxKey: product.taxKey,
-      kind: product.deposit.kind,
-      refundable: product.deposit.refundable,
     };
   };
 
   for (const product of products) {
-    if (product.deposit) allDeposits.set(product.id, toItem(product));
+    if (product.isDeposit) allDeposits.set(product.id, toItem(product));
   }
 
   for (const product of products) {
     const ids = product.depositProductIds;
     if (!ids || ids.length === 0) continue;
-    if (product.deposit) {
+    if (product.isDeposit) {
       throw new DepositError(`Pfandartikel "${product.name}" darf nicht selbst Pfand mitbringen`);
     }
     const list: DepositItem[] = [];
@@ -102,14 +98,14 @@ export function createDepositCatalog(products: readonly Product[]): DepositCatal
     items.set(product.id, list);
   }
 
-  const refundableItems = [...allDeposits.values()].filter((item) => item.refundable);
+  const allItems = [...allDeposits.values()];
 
   return {
     for(productId) {
       return items.get(productId) ?? [];
     },
-    refundable() {
-      return refundableItems;
+    all() {
+      return allItems;
     },
   };
 }
@@ -117,7 +113,7 @@ export function createDepositCatalog(products: readonly Product[]): DepositCatal
 /** Leerer Katalog, wenn ein Mandant kein Pfand fuehrt. */
 export const NO_DEPOSITS: DepositCatalog = {
   for: () => [],
-  refundable: () => [],
+  all: () => [],
 };
 
 /**
