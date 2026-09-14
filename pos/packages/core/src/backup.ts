@@ -89,8 +89,12 @@ export function catalogCsvLine(fields: readonly string[]): string {
  * scheitert - und Bemerkungen mit Semikolon schreibt jeder. Umbrueche innerhalb
  * von Anfuehrungszeichen gehoeren zum Feld; ein `split("\n")` waere dort schon
  * falsch.
+ *
+ * Das Trennzeichen ist einstellbar, weil nicht jede CSV-Datei aus dieser App
+ * stammt: eine Lieferantendatei kommt mit Komma oder Tabulator (siehe
+ * `purchase/csv.ts`). Die Regeln fuer Anfuehrungszeichen sind dieselben.
  */
-export function parseCatalogCsv(text: string): string[][] {
+export function parseCatalogCsv(text: string, separator: string = CSV_SEPARATOR): string[][] {
   const body = text.startsWith(CSV_BOM) ? text.slice(CSV_BOM.length) : text;
   const rows: string[][] = [];
   let row: string[] = [];
@@ -116,7 +120,7 @@ export function parseCatalogCsv(text: string): string[][] {
 
     if (char === '"' && field === "") {
       quoted = true;
-    } else if (char === CSV_SEPARATOR) {
+    } else if (char === separator) {
       row.push(field);
       field = "";
     } else if (char === "\n" || char === "\r") {
