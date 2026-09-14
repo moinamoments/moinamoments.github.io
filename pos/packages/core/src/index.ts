@@ -25,6 +25,7 @@ export * from "./park.ts";
 export * from "./catalog.ts";
 export * from "./stock.ts";
 export * from "./images.ts";
+export * from "./backup.ts";
 export * from "./deposit.ts";
 export * from "./cart.ts";
 export * from "./order.ts";

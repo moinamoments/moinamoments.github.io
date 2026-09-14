@@ -84,6 +84,12 @@ export default function EinstellungenScreen() {
         allowed: kasse.can("CASH_MOVEMENT") || kasse.can("OPEN_DAY"),
       },
       {
+        title: "Artikel sichern und ausgeben",
+        subtitle: "Als Tabelle bearbeiten, Sicherung anlegen und einspielen",
+        route: "/sicherung",
+        allowed: kasse.can("EXPORT_DATA") || kasse.can("MANAGE_PRODUCTS"),
+      },
+      {
         title: "Pruefprotokoll",
         subtitle: "Wer hat was am System getan - Storni, Entnahmen, Rechte",
         route: "/protokoll",
