@@ -22,6 +22,7 @@ import { useFocusEffect } from "expo-router";
 import {
   DEFAULT_PRINTER_CONFIG,
   DEFAULT_TERMINAL_CONFIG,
+  EscPosBuilder,
   TERMINAL_LABELS,
   checkDisplayName,
   checkLocalPrinterUrl,
@@ -29,6 +30,7 @@ import {
   checkPrinterHost,
   checkRequiredText,
   terminalRequirements,
+  transportFor,
   validatePrinterConfig,
   validateTerminalConfig,
   type Device,
@@ -61,6 +63,7 @@ import {
   saveDevice,
   saveTerminalConfig,
 } from "../src/db/repositories.ts";
+import { socketFactoryFor } from "../src/printing/socket.ts";
 import { colors, font, space } from "../src/theme.ts";
 
 const TERMINAL_KINDS: readonly TerminalKind[] = ["MANUAL", "TAP_TO_PAY", "BLUETOOTH_READER", "NETWORK_READER"];
@@ -82,6 +85,8 @@ export default function KassenScreen() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminal, setTerminal] = useState<TerminalConfig>(DEFAULT_TERMINAL_CONFIG);
   const [terminalProblem, setTerminalProblem] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!kasse.ready || !kasse.device) return;
@@ -202,6 +207,57 @@ export default function KassenScreen() {
         },
       ],
     );
+  };
+
+  /**
+   * Testdruck.
+   *
+   * Der Punkt der ganzen Einrichtung: ohne ihn merkt der Betrieb erst beim
+   * ersten Kunden, dass die Adresse falsch ist oder der Drucker im
+   * Gastnetz haengt. Der Zettel ist absichtlich kurz - er soll Papier sparen
+   * und trotzdem zeigen, dass Umlaute und der Schnitt ankommen.
+   */
+  const testPrint = (): void => {
+    setTestResult(null);
+    setPrinterProblem(null);
+
+    // Gedruckt wird mit den Werten aus den Feldern, nicht mit den
+    // gespeicherten: sonst muesste man erst speichern, um zu pruefen, ob es
+    // ueberhaupt stimmt.
+    const draft: PrinterConfig =
+      printer.kind === "network" ? { ...printer, host: printerHost.trim(), port: Number(printerPort) || 9100 } : printer;
+
+    const { transport, reason } = transportFor(draft, socketFactoryFor(draft.kind));
+    if (reason) {
+      setPrinterProblem(reason);
+      return;
+    }
+
+    setTesting(true);
+    void (async () => {
+      try {
+        const builder = new EscPosBuilder().initialize();
+        builder.align("center").bold(true).line("Testdruck").bold(false);
+        builder.line(kasse.tenant?.name ?? "Kasse");
+        builder.line(kasse.device?.name ?? "");
+        builder.align("left").line();
+        // Umlaute und Sonderzeichen: hier faellt auf, wenn die Codepage nicht
+        // stimmt - aus "Getränke" wird sonst "Getr?nke".
+        builder.line("Umlaute: Getraenke, Gruesse, Massband");
+        builder.line("Sonderzeichen: € § % & 19,00");
+        builder.line(`Papierbreite: ${draft.paperWidth} Zeichen`);
+        builder.line("-".repeat(draft.paperWidth));
+        builder.line(kasse.now().replace("T", " ").slice(0, 19));
+        builder.cut();
+
+        await transport.send(builder.build());
+        setTestResult(`Gesendet an ${transport.label}. Kommt der Zettel nicht, stimmt die Adresse oder das Netz nicht.`);
+      } catch (issue) {
+        setPrinterProblem((issue as Error).message);
+      } finally {
+        setTesting(false);
+      }
+    })();
   };
 
   const savePrinter = (): void => {
@@ -490,6 +546,15 @@ export default function KassenScreen() {
           value={printer.openDrawerOnCash}
         />
         {printerProblem ? <Text style={styles.problem}>{printerProblem}</Text> : null}
+        {testResult ? <Muted>{testResult}</Muted> : null}
+
+        <Button
+          disabled={printer.kind === "none" || testing}
+          label="Testdruck"
+          loading={testing}
+          onPress={testPrint}
+          subtitle="Prueft mit den Werten aus den Feldern, ohne zu speichern"
+        />
         <Muted>
           Ohne Drucker bleibt der Bon nicht aus: er wird angezeigt und kann per Mail oder SMS herausgegeben werden.
           Die Belegausgabepflicht nach § 146a AO ist damit erfuellt.

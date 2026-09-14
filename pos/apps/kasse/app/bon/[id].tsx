@@ -15,12 +15,15 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Linking, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import {
+  DEFAULT_PRINTER_CONFIG,
   DELIVERY_LABELS,
   SMALL_INVOICE_LIMIT,
   type DeliveryChannel,
   type DeliveryRecord,
   type Order,
+  type PrinterConfig,
   type ReceiptView,
+  buildReceiptCommands,
   buildReceiptView,
   checkEmail,
   checkPhone,
@@ -30,9 +33,11 @@ import {
   needsCustomerAddress,
   qrRuns,
   renderReceiptText,
+  transportFor,
 } from "@kp/core";
 import { useKasse } from "../../src/state/KasseProvider.tsx";
-import { getOrder, listDeliveries } from "../../src/db/repositories.ts";
+import { getDeviceConfig, getOrder, listDeliveries } from "../../src/db/repositories.ts";
+import { socketFactoryFor } from "../../src/printing/socket.ts";
 import { Button, Card, Field, Muted, Notice, Row as InfoRow, Screen, Sheet, Title } from "../../src/components/ui.tsx";
 import { colors, font, space } from "../../src/theme.ts";
 
@@ -47,6 +52,10 @@ export default function BonScreen() {
   const [sending, setSending] = useState<DeliveryChannel | null>(null);
   const [recipient, setRecipient] = useState("");
   const [sendProblem, setSendProblem] = useState<string | null>(null);
+  const [printer, setPrinter] = useState<PrinterConfig>(DEFAULT_PRINTER_CONFIG);
+  const [printing, setPrinting] = useState(false);
+  const [printNote, setPrintNote] = useState<string | null>(null);
+  const [printProblem, setPrintProblem] = useState<string | null>(null);
 
   const loadDeliveries = useCallback(async () => {
     if (!kasse.ready || !id) return;
@@ -56,6 +65,49 @@ export default function BonScreen() {
   useEffect(() => {
     void loadDeliveries();
   }, [loadDeliveries]);
+
+  useEffect(() => {
+    if (!kasse.ready || !kasse.device) return;
+    void getDeviceConfig(kasse.db(), kasse.device.id).then((config) => setPrinter(config.printer));
+  }, [kasse]);
+
+  /**
+   * Bon drucken.
+   *
+   * Ein fehlgeschlagener Druck verliert nichts: der Beleg steht schon in der
+   * Datenbank, und diese Seite kann ihn jederzeit erneut ausgeben. Deshalb gibt
+   * es keine Warteschlange - sie waere ein zweiter Ort, an dem Belege liegen.
+   */
+  const print = (): void => {
+    if (!view) return;
+    setPrintProblem(null);
+    setPrintNote(null);
+
+    const { transport, reason } = transportFor(printer, socketFactoryFor(printer.kind));
+    if (reason) {
+      setPrintProblem(reason);
+      return;
+    }
+
+    setPrinting(true);
+    void (async () => {
+      try {
+        // Ein erneut ausgegebener Beleg ist ein Nachdruck und wird so
+        // gekennzeichnet - er darf nicht als Erstbeleg durchgehen.
+        const commands = buildReceiptCommands(view, {
+          width: printer.paperWidth,
+          openDrawer: printer.openDrawerOnCash && order?.payments.some((payment) => payment.method === "CASH") === true,
+        });
+        await transport.send(commands);
+        setPrintNote(`Gedruckt auf ${transport.label}.`);
+        setReprint(true);
+      } catch (issue) {
+        setPrintProblem((issue as Error).message);
+      } finally {
+        setPrinting(false);
+      }
+    })();
+  };
 
   useEffect(() => {
     if (!kasse.ready || !id || !kasse.tenant || !kasse.store || !kasse.device) return;
@@ -187,6 +239,24 @@ export default function BonScreen() {
           ))}
         </Card>
 
+        {printProblem ? <Notice tone="danger">{printProblem}</Notice> : null}
+        {printNote ? <Notice tone="info">{printNote}</Notice> : null}
+
+        <Button
+          disabled={printing || printer.kind === "none"}
+          label="Bon drucken"
+          loading={printing}
+          onPress={print}
+          subtitle={
+            printer.kind === "none"
+              ? "Kein Drucker eingerichtet - unter Einstellungen › Kassen"
+              : printer.kind === "network"
+                ? `${printer.host ?? "?"}:${printer.port ?? 9100}`
+                : "Bluetooth"
+          }
+          tone={printer.kind === "none" ? "neutral" : "accent"}
+        />
+
         <Button
           label="Per E-Mail senden"
           onPress={() => {
@@ -194,7 +264,6 @@ export default function BonScreen() {
             setSendProblem(null);
             setSending("EMAIL");
           }}
-          tone="accent"
         />
         <Button
           label="Per SMS senden"

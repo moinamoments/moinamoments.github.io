@@ -32,6 +32,7 @@ export * from "./order.ts";
 export * from "./receipt.ts";
 export * from "./qr.ts";
 export * from "./escpos.ts";
+export * from "./printing/transport.ts";
 export * from "./payment/terminal.ts";
 export * from "./cashbook.ts";
 export * from "./closing.ts";

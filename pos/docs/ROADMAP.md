@@ -61,24 +61,30 @@ Umsatzdaten her.**
 **Zu tun:** SQLCipher einbinden, Schlüssel in `expo-secure-store` (Keychain
 beziehungsweise Keystore) ablegen, Migration der bestehenden Datei.
 
-### 1.4 Bondruck: der Transport
+### 1.4 Bondruck: der Bluetooth-Kanal und der Entwicklungs-Build
 
-**Fehlt:** Bytes an den Drucker senden.
+**Fertig:** der Befehlsaufbau (`escpos.ts`) mit Codepage 858 für Umlaute,
+Rastergrafik für den QR-Code, Schnitt, Geldschublade und Umbruch für 58- und
+80-mm-Papier; der **Transport** (`printing/transport.ts`) mit Stückelung,
+Zeitgeber und der Prüfung, dass ein Netzwerkdrucker im eigenen Netz steht; die
+Einrichtung samt Testdruck; der Druckknopf am Bon. Der Transport ist gegen einen
+echten TCP-Server geprüft — nicht nur gegen eine Attrappe.
 
-**Fertig:** der gesamte Befehlsaufbau (`escpos.ts`): Codepage 858 für Umlaute,
-Rastergrafik für den QR-Code, Schnitt, Geldschublade, Umbruch für 58- und
-80-mm-Papier. Die Einrichtung in der App steht (Netzwerk und Bluetooth), samt
-der Prüfung, dass ein Netzwerkdrucker im eigenen Netz steht.
+**Fehlt:** zweierlei.
+
+* **Der Entwicklungs-Build.** `react-native-tcp-socket` ist ein natives Modul und
+  in Expo Go nicht vorhanden. Die App lädt es deshalb verzögert und sagt, wenn
+  es fehlt — sie stürzt nicht ab, und der Bon geht anders heraus. Für den echten
+  Druck braucht es `npx expo prebuild` und einen eigenen Build.
+* **Bluetooth.** Der Transport im Kern ist da und geprüft; es fehlt das
+  SPP-Modul auf der Geräteseite. Die Kopplung selbst gehört in die Einstellungen
+  des Betriebssystems — eine App, die Geräte selbst koppelt, braucht Rechte, die
+  sie nicht braucht.
 
 **Heute:** der Bon wird angezeigt und kann per E-Mail, SMS oder Systemfreigabe
 herausgegeben werden. Das **erfüllt die Belegausgabepflicht** (§ 146a Abs. 2 AO)
 — der Druck ist Komfort, nicht Pflicht. Deshalb steht dieser Punkt in Stufe 1
 nur mit halber Dringlichkeit.
-
-**Zu tun:** ein TCP-Socket auf Port 9100 für LAN und WLAN — React Native hat
-keinen, also `react-native-tcp-socket` und ein Entwicklungs-Build. Für Bluetooth
-zusätzlich die Kopplung und ein SPP-Kanal. Beides ist ein Modul hinter
-`PrinterTransport`; der Rest der App ändert sich nicht.
 
 ## Stufe 2: Was der Betrieb im Alltag vermisst
 

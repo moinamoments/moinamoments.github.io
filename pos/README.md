@@ -28,9 +28,10 @@ erleben kann.
 | Prüfprotokoll: wer hat was am System getan | fertig |
 | Belegausgabe per E-Mail und SMS | fertig |
 | Artikelstamm als CSV bearbeiten, Sicherung mit Prüfsumme | fertig |
-| Bondruck über LAN/WLAN und Bluetooth | Befehlsaufbau fertig, Transport offen |
+| Bondruck über LAN/WLAN | fertig, braucht einen Entwicklungs-Build |
+| Bondruck über Bluetooth | Transport fertig, Gerätemodul offen |
 | Kartenzahlung und Tap to Pay | Schnittstelle und Simulator fertig, Anbieter fehlt |
-| DATEV- und Lexware-Export | offen |
+| DATEV- und Lexware-Export (Buchungsstapel) | fertig, Konten müssen bestätigt werden |
 | Wareneingang aus Lieferantenrechnung | offen |
 
 Was noch fehlt und warum, steht in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -69,7 +70,7 @@ npx expo export --platform android --platform ios --output-dir dist
 
 ### Tests
 
-454 Tests, aufgeteilt in zwei Arten:
+507 Tests, aufgeteilt in zwei Arten:
 
 * **Kerntests** (`packages/core/src/*.test.ts`) prüfen Rechnen und Recht ohne
   jede Umgebung: Centbeträge, Umsatzsteuer je Gruppe, Storno, Pfand, QR-Code

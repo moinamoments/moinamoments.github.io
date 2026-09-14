@@ -280,6 +280,11 @@ export function buildReceiptCommands(
   builder.align("left");
   builder.line(row(`Beleg ${view.receiptNumber}`, view.serviceMode));
   builder.line(view.issuedAt);
+  // Kundenname und Vermerk gehoeren auf das Papier genauso wie auf den
+  // Bildschirm: ein Stornobeleg, der nicht nennt, welchen Beleg er berichtigt,
+  // ist bei einer Kassennachschau nicht zuzuordnen.
+  if (view.customerName) builder.line(`Kunde: ${view.customerName}`);
+  if (view.note) builder.line(view.note);
   builder.line("-".repeat(width));
 
   for (const line of view.lines) {
