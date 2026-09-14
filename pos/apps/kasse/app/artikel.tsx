@@ -33,6 +33,10 @@ import {
   buildCategoryTree,
   canAddCategory,
   canAddProduct,
+  checkAmount,
+  checkBarcode,
+  checkDisplayName,
+  checkThreshold,
   flattenCategoryTree,
   formatAttribution,
   formatCategoryPath,
@@ -40,11 +44,11 @@ import {
   formatStock,
   isoWithOffset,
   openverseSource,
-  parseAmount,
   stockState,
   toProductImage,
   validateCategories,
 } from "@kp/core";
+import { useRouter } from "expo-router";
 import { useKasse } from "../src/state/KasseProvider.tsx";
 import { countProductsInCategory, deactivateCategory, deactivateProduct, saveCategory, saveProduct } from "../src/db/repositories.ts";
 import { Button, Card, Field, Label, Muted, Notice, Screen, Segmented, Title } from "../src/components/ui.tsx";
@@ -62,6 +66,8 @@ type Draft = {
   differentDineIn: boolean;
   taxKeyDineIn: number;
   unit: Product["unit"];
+  /** Artikelnummer oder Barcode - fuer Scanner und Warenwirtschaft. */
+  sku: string;
   isDeposit: boolean;
   depositProductIds: string[];
   trackStock: boolean;
@@ -80,6 +86,7 @@ function newDraft(categoryId: string): Draft {
     differentDineIn: false,
     taxKeyDineIn: TAX_RATES.NORMAL.key,
     unit: "PIECE",
+    sku: "",
     isDeposit: false,
     depositProductIds: [],
     trackStock: false,
@@ -99,6 +106,7 @@ function toDraft(product: Product): Draft {
     differentDineIn: product.taxKeyDineIn != null,
     taxKeyDineIn: product.taxKeyDineIn ?? TAX_RATES.NORMAL.key,
     unit: product.unit,
+    sku: product.sku ?? "",
     isDeposit: product.isDeposit === true,
     depositProductIds: [...(product.depositProductIds ?? [])],
     trackStock: product.trackStock === true,
@@ -111,6 +119,9 @@ function toDraft(product: Product): Draft {
 
 export default function ArtikelScreen() {
   const kasse = useKasse();
+  const router = useRouter();
+  const mayProducts = kasse.can("MANAGE_PRODUCTS");
+  const mayCategories = kasse.can("MANAGE_CATEGORIES");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [categoryDraft, setCategoryDraft] = useState<{ name: string; parentId: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,16 +148,31 @@ export default function ArtikelScreen() {
     if (!draft || !kasse.tenant) return;
     setError(null);
 
-    const name = draft.name.trim();
-    if (name === "") return setError("Der Artikel braucht einen Namen.");
+    // Alle Pruefungen aus der zentralen Eingabepruefung des Kerns: dieselben
+    // Regeln und dieselben Meldungen wie auf jedem anderen Bildschirm. Eigene
+    // Regeln hier waeren die zweite Wahrheit darueber, was ein gueltiger Preis
+    // ist.
+    const checkedName = checkDisplayName(draft.name, "Der Artikelname");
+    if (!checkedName.ok) return setError(checkedName.reason);
+    const name = checkedName.value;
 
-    const price = draft.openPrice ? null : parseAmount(draft.price);
-    if (!draft.openPrice && (price == null || price < 0)) {
-      return setError("Der Preis ist nicht lesbar. Beispiel: 4,50");
+    let price: number | null = null;
+    if (!draft.openPrice) {
+      const checkedPrice = checkAmount(draft.price, {
+        label: draft.isDeposit ? "Der Pfandbetrag" : "Der Preis",
+        // Ein Artikel darf 0,00 kosten (Zugabe, Probe); ein Pfandartikel nicht -
+        // Pfand ueber null ist kein Pfand.
+        allowZero: !draft.isDeposit,
+      });
+      if (!checkedPrice.ok) return setError(checkedPrice.reason);
+      price = checkedPrice.value;
+    } else if (draft.isDeposit) {
+      return setError("Ein Pfandartikel braucht einen festen Betrag - ein offener Preis ist hier nicht moeglich.");
     }
-    if (draft.isDeposit && (price == null || price <= 0)) {
-      return setError("Ein Pfandartikel braucht einen festen Betrag groesser als null.");
-    }
+
+    const checkedBarcode = draft.sku.trim() === "" ? null : checkBarcode(draft.sku);
+    if (checkedBarcode && !checkedBarcode.ok) return setError(checkedBarcode.reason);
+
     if (draft.depositProductIds.length > MAX_DEPOSITS_PER_PRODUCT) {
       return setError(`Hoechstens ${MAX_DEPOSITS_PER_PRODUCT} Pfandartikel je Artikel - mehr wird der Bon unleserlich.`);
     }
@@ -158,13 +184,16 @@ export default function ArtikelScreen() {
       if (!allowed.ok) return setError(allowed.reason);
     }
 
-    const threshold = draft.lowStockThreshold.trim();
-    const thresholdUnits = threshold === "" ? null : Number(threshold.replace(",", "."));
-    if (thresholdUnits != null && (!Number.isFinite(thresholdUnits) || thresholdUnits < 0)) {
-      return setError("Der Mindestbestand ist keine Zahl.");
-    }
+    const checkedThreshold = checkThreshold(draft.lowStockThreshold);
+    if (!checkedThreshold.ok) return setError(checkedThreshold.reason);
 
     const existing = draft.id ? kasse.products.find((p) => p.id === draft.id) : null;
+
+    // Preisaenderungen gehoeren ins Pruefprotokoll: mit ihnen laesst sich ein
+    // Umsatz nach unten regeln, ohne dass ein Storno auffaellt.
+    if (existing && existing.price !== price && !kasse.can("CHANGE_PRICES")) {
+      return setError('Preise zu aendern ist fuer Ihren Zugang nicht freigegeben.');
+    }
     const product: Product = {
       id: draft.id ?? `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       tenantId: kasse.tenant.id,
@@ -174,7 +203,7 @@ export default function ArtikelScreen() {
       price,
       taxKey: draft.taxKey,
       taxKeyDineIn: draft.differentDineIn ? draft.taxKeyDineIn : null,
-      sku: null,
+      sku: checkedBarcode && checkedBarcode.ok ? checkedBarcode.value : null,
       unit: draft.unit,
       // Ein Pfandartikel bringt selbst kein Pfand mit - das lehnt der Kern ab.
       depositProductIds: draft.isDeposit ? null : draft.depositProductIds,
@@ -186,7 +215,7 @@ export default function ArtikelScreen() {
       // Der Bestand selbst wird hier nicht angefasst - er aendert sich nur
       // ueber Bestandsbewegungen (Bildschirm "Bestand").
       stock: existing?.stock ?? 0,
-      lowStockThreshold: thresholdUnits == null ? null : Math.round(thresholdUnits * ONE),
+      lowStockThreshold: checkedThreshold.value,
       sortOrder: existing?.sortOrder ?? 0,
       active: true,
       updatedAt: isoWithOffset(new Date(), kasse.tenant.timeZone),
@@ -194,6 +223,15 @@ export default function ArtikelScreen() {
 
     try {
       await saveProduct(kasse.db(), product);
+      if (existing && existing.price !== price) {
+        await kasse.audit("PRICE_CHANGED", {
+          subject: name,
+          detail: `${existing.price == null ? "offener Preis" : formatEuro(existing.price)} -> ${price == null ? "offener Preis" : formatEuro(price)}`,
+          amount: price,
+        });
+      } else {
+        await kasse.audit("SETTINGS_CHANGED", { subject: name, detail: existing ? "Artikel geaendert" : "Artikel angelegt" });
+      }
       await kasse.reload();
       setDraft(null);
     } catch (issue) {
@@ -295,16 +333,40 @@ export default function ArtikelScreen() {
           </Card>
         ) : null}
 
+        {!mayProducts && !mayCategories ? (
+          <Notice tone="warning">
+            Artikel und Warengruppen zu pflegen ist fuer Ihren Zugang nicht freigegeben. Der Stamm ist hier nur zu
+            sehen.
+          </Notice>
+        ) : null}
+
         <View style={styles.headActions}>
           <Button
             label="Neuer Artikel"
             onPress={() => setDraft(newDraft(kasse.categories[0]?.id ?? ""))}
             tone="accent"
             style={styles.flex}
-            disabled={kasse.categories.length === 0}
+            disabled={kasse.categories.length === 0 || !mayProducts}
           />
-          <Button label="Neue Warengruppe" onPress={() => setCategoryDraft({ name: "", parentId: null })} style={styles.flex} />
+          <Button
+            disabled={!mayCategories}
+            label="Neue Warengruppe"
+            onPress={() => setCategoryDraft({ name: "", parentId: null })}
+            style={styles.flex}
+          />
         </View>
+
+        {/*
+          Der Bestand wird hier nicht gepflegt, sondern nur verlinkt: er aendert
+          sich ueber Bewegungen mit Grund, nicht ueber ein Feld im
+          Artikelformular. Ein Formular, das den Bestand ueberschreibt, macht
+          jede Bewegung zunichte.
+        */}
+        <Button
+          label="Bestand buchen und ansehen"
+          onPress={() => router.push("/bestand")}
+          subtitle="Wareneingang, Zaehlung, Schwund, Journal"
+        />
 
         {kasse.categories.length === 0 ? <Notice tone="warning">Zuerst eine Warengruppe anlegen.</Notice> : null}
 
@@ -319,14 +381,16 @@ export default function ArtikelScreen() {
                   {node.truncated ? " · tiefere Gruppen nicht angezeigt" : ""}
                 </Muted>
               </View>
-              {node.depth + 1 < MAX_CATEGORY_DEPTH ? (
+              {node.depth + 1 < MAX_CATEGORY_DEPTH && mayCategories ? (
                 <Button
                   label="+ Untergruppe"
                   onPress={() => setCategoryDraft({ name: "", parentId: node.category.id })}
                   style={styles.smallButton}
                 />
               ) : null}
-              <Button label="Ausblenden" onPress={() => void archiveCategory(node)} style={styles.smallButton} />
+              {mayCategories ? (
+                <Button label="Ausblenden" onPress={() => void archiveCategory(node)} style={styles.smallButton} />
+              ) : null}
             </View>
 
             {(byCategory.get(node.category.id) ?? []).map((product) => (
@@ -337,8 +401,8 @@ export default function ArtikelScreen() {
                 depositNames={(product.depositProductIds ?? []).map(
                   (id) => kasse.products.find((p) => p.id === id)?.name ?? id,
                 )}
-                onEdit={() => setDraft(toDraft(product))}
-                onArchive={() => archive(product)}
+                onEdit={mayProducts ? () => setDraft(toDraft(product)) : undefined}
+                onArchive={mayProducts ? () => archive(product) : undefined}
               />
             ))}
           </View>
@@ -355,8 +419,8 @@ export default function ArtikelScreen() {
                 product={product}
                 categories={kasse.categories}
                 depositNames={[]}
-                onEdit={() => setDraft(toDraft(product))}
-                onArchive={() => archive(product)}
+                onEdit={mayProducts ? () => setDraft(toDraft(product)) : undefined}
+                onArchive={mayProducts ? () => archive(product) : undefined}
               />
             ))}
           </View>
@@ -412,15 +476,16 @@ function ProductRow({
   product: Product;
   categories: readonly Category[];
   depositNames: readonly string[];
-  onEdit: () => void;
-  onArchive: () => void;
+  /** Fehlt, wenn der Bediener Artikel nicht pflegen darf - dann ist die Zeile nur Anzeige. */
+  onEdit?: (() => void) | undefined;
+  onArchive?: (() => void) | undefined;
 }) {
   const state = stockState(product);
   const stockText = formatStock(product);
 
   return (
     <Card style={styles.row}>
-      <Pressable accessibilityRole="button" onPress={onEdit} style={styles.rowMain}>
+      <Pressable accessibilityRole="button" disabled={!onEdit} onPress={onEdit ?? (() => {})} style={styles.rowMain}>
         {product.image ? <Image source={{ uri: product.image.url }} style={styles.thumb} resizeMode="cover" /> : null}
         <View style={styles.flex}>
           <Text style={styles.name}>{product.name}</Text>
@@ -443,7 +508,7 @@ function ProductRow({
           {!product.isDeposit ? <Muted>{formatCategoryPath(categories, product.categoryId)}</Muted> : null}
         </View>
       </Pressable>
-      <Button label="Ausblenden" onPress={onArchive} />
+      {onArchive ? <Button label="Ausblenden" onPress={onArchive} /> : null}
     </Card>
   );
 }
@@ -567,6 +632,16 @@ function ProductDialog({
                 value={draft?.price ?? ""}
               />
             ) : null}
+
+            <Field
+              autoCapitalize="none"
+              hint="Optional. EAN-8, EAN-13, UPC-A oder GTIN-14 - mit Pruefziffer, damit ein verlesener Scan auffaellt."
+              keyboardType="numeric"
+              label="Artikelnummer / Barcode"
+              onChangeText={(value) => set("sku", value)}
+              placeholder="z. B. 4012345678901"
+              value={draft?.sku ?? ""}
+            />
 
             <Label>Verkaufseinheit</Label>
             <Segmented

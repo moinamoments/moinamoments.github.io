@@ -8,15 +8,21 @@
  * Das Zaehlprotokoll ist freiwillig, aber sinnvoll: erst dadurch entsteht die
  * Differenz zwischen gerechnetem und tatsaechlichem Bestand. Ein Fehlbetrag
  * wird angezeigt, nicht versteckt - genau dafuer zaehlt man.
+ *
+ * Der Anfangsbestand kommt aus dem **Kassenbuch** dieser Schicht, nicht aus dem
+ * letzten Abschluss. Der Unterschied ist kein Feinschliff: wer morgens
+ * Wechselgeld einlegt und es nicht als Eroeffnung buchen kann, hat abends einen
+ * Ueberschuss in der Hoehe des Wechselgelds - und sucht einen Fehler, den es
+ * nicht gibt. Ebenso gehen Entnahmen und Einlagen der Schicht in den
+ * Soll-Bestand ein.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import {
-  type CashCountEntry,
+  CASH_MOVEMENT_LABELS,
   type ClosingReport,
-  DENOMINATIONS,
   type Order,
   buildClosing,
   buildExport,
@@ -24,26 +30,28 @@ import {
   formatAmount,
   formatEuro,
   isoWithOffset,
+  openingCashFrom,
   outboxKey,
+  parkedSalesBlockingClosing,
   renderClosingText,
+  summarizeCashbook,
 } from "@kp/core";
 import { useKasse } from "../src/state/KasseProvider.tsx";
 import {
-  lastCountedCash,
   listOpenForClosing,
   nextSequence,
   peekSequence,
   saveClosing,
   upsertOutboxEntry,
 } from "../src/db/repositories.ts";
-import { Button, Card, Label, Muted, Notice, Screen, Title } from "../src/components/ui.tsx";
-import { colors, font, radius, space } from "../src/theme.ts";
+import { Button, Card, Label, Muted, Notice, Row, Screen, Title } from "../src/components/ui.tsx";
+import { Zaehlprotokoll, toCashCount, type CashCounts } from "../src/components/Zaehlprotokoll.tsx";
+import { colors, font, space } from "../src/theme.ts";
 
 export default function AbschlussScreen() {
   const kasse = useKasse();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [openingCash, setOpeningCash] = useState(0);
-  const [counts, setCounts] = useState<Record<number, string>>({});
+  const [counts, setCounts] = useState<CashCounts>({});
   const [report, setReport] = useState<ClosingReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nextNumber, setNextNumber] = useState(1);
@@ -51,13 +59,11 @@ export default function AbschlussScreen() {
   const load = useCallback(async () => {
     if (!kasse.ready || !kasse.device) return;
     const handle = kasse.db();
-    const [pending, opening, closings] = await Promise.all([
+    const [pending, closings] = await Promise.all([
       listOpenForClosing(handle, kasse.device.id),
-      lastCountedCash(handle, kasse.device.id),
       peekSequence(handle, kasse.device.id, "closing"),
     ]);
     setOrders(pending);
-    setOpeningCash(opening);
     setNextNumber(closings + 1);
   }, [kasse]);
 
@@ -73,14 +79,7 @@ export default function AbschlussScreen() {
     }, [load]),
   );
 
-  const cashCount: CashCountEntry[] = useMemo(
-    () =>
-      DENOMINATIONS.map((denomination) => ({
-        denomination,
-        count: Number.parseInt(counts[denomination] ?? "", 10) || 0,
-      })).filter((entry) => entry.count > 0),
-    [counts],
-  );
+  const cashCount = useMemo(() => toCashCount(counts), [counts]);
 
   const counted = cashCount.length > 0 ? countCash(cashCount) : null;
   const cashSales = useMemo(
@@ -91,7 +90,18 @@ export default function AbschlussScreen() {
         .reduce((sum, payment) => sum + payment.amount, 0),
     [orders],
   );
-  const expected = openingCash + cashSales;
+
+  // Anfangsbestand und Bewegungen kommen aus dem Kassenbuch der Schicht.
+  const openingCash = useMemo(() => openingCashFrom(kasse.cashMovements), [kasse.cashMovements]);
+  const cashbook = useMemo(() => summarizeCashbook(kasse.cashMovements), [kasse.cashMovements]);
+  const expected = openingCash + cashSales + cashbook.netMovements;
+
+  /**
+   * Geparkte Vorgaenge blockieren den Abschluss nicht, muessen aber genannt
+   * werden: ein geparkter Vorgang ist noch kein Beleg und taucht im Z-Bericht
+   * nicht auf - er wuerde stillschweigend in den naechsten Tag rutschen.
+   */
+  const parkedWarning = useMemo(() => parkedSalesBlockingClosing(kasse.parked), [kasse.parked]);
 
   const close = async () => {
     if (!kasse.tenant || !kasse.store || !kasse.device || !kasse.user) return;
@@ -116,7 +126,7 @@ export default function AbschlussScreen() {
         to: now,
         createdAt: now,
         orders,
-        openingCash,
+        cashMovements: [...kasse.cashMovements],
         cashCount,
       });
 
@@ -173,37 +183,37 @@ export default function AbschlussScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Title>Kassenabschluss</Title>
         {error ? <Notice tone="danger">{error}</Notice> : null}
+        {parkedWarning ? <Notice tone="warning">{parkedWarning}</Notice> : null}
+        {openingCash === 0 ? (
+          <Notice tone="warning">
+            Fuer diese Schicht ist keine Tageseroeffnung gebucht. Der Soll-Bestand rechnet dann ohne Wechselgeld, und
+            ein Ueberschuss in dessen Hoehe ist kein Fehler, sondern die fehlende Eroeffnung. Zu buchen unter
+            Einstellungen › Kassenbuch.
+          </Notice>
+        ) : null}
 
         <Card style={styles.card}>
-          <Row label={`Abschluss Nr.`} value={String(nextNumber)} />
+          <Row label="Abschluss Nr." value={String(nextNumber)} />
           <Row label="Offene Belege" value={String(orders.length)} />
           <Row label="Barumsatz" value={formatAmount(cashSales)} />
           <Row label="Anfangsbestand" value={formatAmount(openingCash)} />
+          {kasse.cashMovements
+            .filter((movement) => movement.type !== "OPENING")
+            .map((movement) => (
+              <Row
+                key={movement.id}
+                label={`${CASH_MOVEMENT_LABELS[movement.type]}: ${movement.reason}`}
+                tone={movement.amount < 0 ? "danger" : "normal"}
+                value={formatAmount(movement.amount)}
+              />
+            ))}
           <Row bold label="Soll-Kassenbestand" value={formatAmount(expected)} />
           {orders.length === 0 ? <Muted>Alle Belege sind abgeschlossen.</Muted> : null}
         </Card>
 
         <Card style={styles.card}>
           <Label>Zaehlprotokoll</Label>
-          <Muted>Stueckzahlen eintragen. Leer lassen heisst: nicht gezaehlt.</Muted>
-          <View style={styles.denominations}>
-            {DENOMINATIONS.map((denomination) => (
-              <View key={denomination} style={styles.denomination}>
-                <Text style={styles.denominationLabel}>{formatAmount(denomination)}</Text>
-                <TextInput
-                  accessibilityLabel={`Anzahl ${formatAmount(denomination)}`}
-                  keyboardType="number-pad"
-                  onChangeText={(value) =>
-                    setCounts((current) => ({ ...current, [denomination]: value.replace(/\D/g, "") }))
-                  }
-                  placeholder="0"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.denominationInput}
-                  value={counts[denomination] ?? ""}
-                />
-              </View>
-            ))}
-          </View>
+          <Zaehlprotokoll counts={counts} onChange={setCounts} />
 
           {counted != null ? (
             <>
@@ -222,8 +232,9 @@ export default function AbschlussScreen() {
           label="Abschluss erstellen"
           onPress={() => void close()}
           tone="accent"
-          disabled={orders.length === 0}
+          disabled={orders.length === 0 || !kasse.can("CLOSE_DAY")}
         />
+        {!kasse.can("CLOSE_DAY") ? <Muted>Den Kassenabschluss darf Ihr Zugang nicht erstellen.</Muted> : null}
 
         {report ? (
           <Card style={styles.card}>
@@ -247,45 +258,8 @@ export default function AbschlussScreen() {
   );
 }
 
-function Row({
-  label,
-  value,
-  bold,
-  tone = "normal",
-}: {
-  label: string;
-  value: string;
-  bold?: boolean;
-  tone?: "normal" | "warning" | "danger";
-}) {
-  const color = tone === "danger" ? colors.danger : tone === "warning" ? colors.warning : colors.text;
-  return (
-    <View style={styles.row}>
-      <Text style={[styles.rowLabel, bold && styles.bold]}>{label}</Text>
-      <Text style={[styles.rowValue, { color }, bold && styles.bold]}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   content: { gap: space.md, padding: space.md },
   card: { gap: space.sm },
-  row: { flexDirection: "row", justifyContent: "space-between" },
-  rowLabel: { color: colors.text, fontSize: font.body },
-  rowValue: { fontSize: font.body, fontVariant: ["tabular-nums"], fontWeight: "600" },
-  bold: { fontSize: font.label, fontWeight: "800" },
-  denominations: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
-  denomination: { gap: space.xs, width: 84 },
-  denominationLabel: { color: colors.textMuted, fontSize: font.small, textAlign: "center" },
-  denominationInput: {
-    backgroundColor: colors.surfaceRaised,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: font.label,
-    minHeight: 48,
-    textAlign: "center",
-  },
   mono: { color: colors.text, fontFamily: "monospace", fontSize: 12 },
 });

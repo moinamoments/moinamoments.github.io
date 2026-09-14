@@ -11,21 +11,29 @@
  * hier trotzdem, weil ein Kunde ohne Lesegeraet sonst nichts davon sieht.
  */
 
-import React, { useEffect, useState } from "react";
-import { ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { Linking, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import {
+  DELIVERY_LABELS,
+  SMALL_INVOICE_LIMIT,
+  type DeliveryChannel,
+  type DeliveryRecord,
   type Order,
   type ReceiptView,
   buildReceiptView,
+  checkEmail,
+  checkPhone,
   createQrCode,
   formatAmount,
+  formatEuro,
+  needsCustomerAddress,
   qrRuns,
   renderReceiptText,
 } from "@kp/core";
 import { useKasse } from "../../src/state/KasseProvider.tsx";
-import { getOrder } from "../../src/db/repositories.ts";
-import { Button, Card, Muted, Notice, Screen, Title } from "../../src/components/ui.tsx";
+import { getOrder, listDeliveries } from "../../src/db/repositories.ts";
+import { Button, Card, Field, Muted, Notice, Row as InfoRow, Screen, Sheet, Title } from "../../src/components/ui.tsx";
 import { colors, font, space } from "../../src/theme.ts";
 
 export default function BonScreen() {
@@ -35,6 +43,19 @@ export default function BonScreen() {
   const [view, setView] = useState<ReceiptView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reprint, setReprint] = useState(false);
+  const [deliveries, setDeliveries] = useState<readonly DeliveryRecord[]>([]);
+  const [sending, setSending] = useState<DeliveryChannel | null>(null);
+  const [recipient, setRecipient] = useState("");
+  const [sendProblem, setSendProblem] = useState<string | null>(null);
+
+  const loadDeliveries = useCallback(async () => {
+    if (!kasse.ready || !id) return;
+    setDeliveries(await listDeliveries(kasse.db(), id));
+  }, [id, kasse]);
+
+  useEffect(() => {
+    void loadDeliveries();
+  }, [loadDeliveries]);
 
   useEffect(() => {
     if (!kasse.ready || !id || !kasse.tenant || !kasse.store || !kasse.device) return;
@@ -92,6 +113,7 @@ export default function BonScreen() {
           <View style={styles.divider} />
           <Row left={`Beleg ${view.receiptNumber}`} right={view.serviceMode} />
           <Row left="Ausgestellt" right={view.issuedAt} />
+          {view.customerName ? <Row left="Kunde" right={view.customerName} /> : null}
           <View style={styles.divider} />
 
           {view.lines.map((line, index) => (
@@ -164,17 +186,137 @@ export default function BonScreen() {
         </Card>
 
         <Button
+          label="Per E-Mail senden"
+          onPress={() => {
+            setRecipient("");
+            setSendProblem(null);
+            setSending("EMAIL");
+          }}
+          tone="accent"
+        />
+        <Button
+          label="Per SMS senden"
+          onPress={() => {
+            setRecipient("");
+            setSendProblem(null);
+            setSending("SMS");
+          }}
+        />
+        <Button
           label="Bon als Text teilen"
           onPress={() => {
             setReprint(true);
             void Share.share({ message: renderReceiptText(view, 42) });
           }}
         />
+
+        {deliveries.length > 0 ? (
+          <Card style={styles.receipt}>
+            <Title>Herausgegeben</Title>
+            {deliveries.map((record, index) => (
+              <InfoRow
+                key={`${record.sentAt}-${index}`}
+                label={`${DELIVERY_LABELS[record.channel]} an ${record.recipient}`}
+                tone={record.ok ? "success" : "danger"}
+                value={record.ok ? record.sentAt.replace("T", " ").slice(0, 16) : "nicht zugestellt"}
+              />
+            ))}
+            <Muted>
+              Gespeichert ist nur der verkuerzte Empfaenger. Nachweisbar bleiben muss, dass ein Beleg
+              herausgegeben wurde - nicht an welche Adresse.
+            </Muted>
+          </Card>
+        ) : null}
+
+        {needsCustomerAddress(order.total, true) ? (
+          <Notice tone="warning">
+            Ueber {formatEuro(SMALL_INVOICE_LIMIT)} genuegt die Kleinbetragsrechnung nicht mehr. Soll dieser Beleg als
+            Rechnung dienen, braucht er nach § 14 Abs. 4 UStG Name und Adresse des Kunden - sonst kann der Kunde keine
+            Vorsteuer ziehen.
+          </Notice>
+        ) : null}
+
         <Muted>
           Ein erneut ausgegebener Beleg wird als Nachdruck gekennzeichnet. Fuer einen Bondrucker wird
-          derselbe Text verwendet - die Anbindung an ESC/POS-Drucker ist vorgesehen (docs/ROADMAP.md).
+          derselbe Text verwendet; die Druckereinstellungen stehen unter Einstellungen › Kassen.
         </Muted>
       </ScrollView>
+
+      {/* --- Versand ---------------------------------------------------- */}
+      <Sheet
+        footer={
+          <View style={styles.actions}>
+            <Button label="Abbrechen" onPress={() => setSending(null)} style={styles.flex} />
+            <Button
+              label="Senden"
+              onPress={() => {
+                if (!sending || !order) return;
+                // Erst pruefen, dann oeffnen: eine Mail-App, die sich mit einer
+                // unbrauchbaren Adresse oeffnet, hinterlaesst einen Bediener,
+                // der nicht weiss, was schiefging.
+                const checked =
+                  sending === "EMAIL"
+                    ? checkEmail(recipient, { required: true })
+                    : checkPhone(recipient, { required: true });
+                if (!checked.ok) {
+                  setSendProblem(checked.reason);
+                  return;
+                }
+                void (async () => {
+                  try {
+                    await kasse.sendReceipt(
+                      order,
+                      sending,
+                      sending === "EMAIL" ? { email: checked.value } : { phone: checked.value },
+                      // `openURL` wirft, wenn keine App den Aufruf annimmt -
+                      // deshalb wird vorher gefragt.
+                      async (url) => {
+                        if (!(await Linking.canOpenURL(url))) return false;
+                        await Linking.openURL(url);
+                        return true;
+                      },
+                    );
+                    setSending(null);
+                    setRecipient("");
+                    setSendProblem(null);
+                    await loadDeliveries();
+                  } catch (issue) {
+                    setSendProblem((issue as Error).message);
+                    await loadDeliveries();
+                  }
+                })();
+              }}
+              style={styles.flex}
+              tone="accent"
+            />
+          </View>
+        }
+        onClose={() => setSending(null)}
+        open={sending !== null}
+        title={sending === "SMS" ? "Beleg per SMS" : "Beleg per E-Mail"}
+      >
+        <Field
+          autoCapitalize="none"
+          keyboardType={sending === "SMS" ? "phone-pad" : "email-address"}
+          label={sending === "SMS" ? "Mobilnummer" : "E-Mail-Adresse"}
+          onChangeText={(value) => {
+            setSendProblem(null);
+            setRecipient(value);
+          }}
+          placeholder={sending === "SMS" ? "0170 1234567" : "name@beispiel.de"}
+          problem={sendProblem}
+          value={recipient}
+        />
+        <Muted>
+          {sending === "SMS"
+            ? "Die SMS enthaelt Betrieb, Belegnummer, Betrag und Zeitpunkt - mehr passt nicht in eine Nachricht."
+            : "Die E-Mail enthaelt den vollstaendigen Beleg als Text. So bleibt er lesbar, durchsuchbar und ausdruckbar."}
+        </Muted>
+        <Muted>
+          Gesendet wird ueber die Mail- oder SMS-App des Geraets. Die Adresse wird nur fuer diesen Beleg verwendet und
+          nicht gespeichert - im Nachweis steht sie verkuerzt.
+        </Muted>
+      </Sheet>
     </Screen>
   );
 }
@@ -252,6 +394,8 @@ function Row({
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  actions: { flexDirection: "row", gap: space.sm },
   content: { gap: space.md, padding: space.md },
   receipt: { gap: space.xs },
   headerLine: { color: colors.text, fontSize: font.body, fontWeight: "600", textAlign: "center" },

@@ -29,6 +29,13 @@ export default function PfandScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Title>Pfand zuruecknehmen</Title>
 
+        {!kasse.can("REFUND_DEPOSIT") ? (
+          <Notice tone="warning">
+            Pfand zurueckzunehmen ist fuer Ihren Zugang nicht freigegeben - dabei wird Geld ausgezahlt. Der Inhaber
+            kann das Recht erteilen.
+          </Notice>
+        ) : null}
+
         {items.length === 0 ? (
           <Notice tone="warning">
             Es ist kein Pfandartikel angelegt. Unter Artikel einen Artikel anlegen und dort
@@ -75,6 +82,7 @@ export default function PfandScreen() {
 
 function DepositRow({ item }: { item: DepositItem }) {
   const kasse = useKasse();
+  const allowed = kasse.can("REFUND_DEPOSIT");
   const taken = kasse.totals.lines
     .filter((line) => isDeposit(line) && line.businessCaseType === "PfandRueckzahlung" && line.productId === item.productId)
     .reduce((sum, line) => sum - line.quantity, 0);
@@ -91,6 +99,7 @@ function DepositRow({ item }: { item: DepositItem }) {
       <View style={styles.buttons}>
         {[1, 2, 5, 10].map((count) => (
           <Button
+            disabled={!allowed}
             key={count}
             label={`+${count}`}
             onPress={() => kasse.returnDeposit(item, count * ONE)}

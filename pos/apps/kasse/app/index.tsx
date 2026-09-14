@@ -15,26 +15,47 @@ import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, Vi
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
+  MAX_PARKED_SALES,
   ONE,
   type Category,
   type CategoryNode,
   type ComputedLine,
+  type ParkedSale,
   type PaymentIntent,
   type PaymentMethod,
   type Product,
   buildCategoryTree,
   categoryPath,
+  checkAmount,
+  checkCustomerName,
+  checkRequiredText,
   formatAmount,
   formatEuro,
   formatQuantity,
   formatStock,
   isDeposit,
+  parkedMinutes,
   parseAmount,
   productsInCategory,
   stockState,
 } from "@kp/core";
 import { useKasse } from "../src/state/KasseProvider.tsx";
-import { Button, Card, CategoryTile, Field, Label, Muted, Notice, Screen, Segmented, Tile, Title } from "../src/components/ui.tsx";
+import {
+  Badge,
+  Button,
+  Card,
+  CategoryTile,
+  Field,
+  Label,
+  ListRow,
+  Muted,
+  Notice,
+  Screen,
+  Segmented,
+  Sheet,
+  Tile,
+  Title,
+} from "../src/components/ui.tsx";
 import { colors, font, radius, space, touch } from "../src/theme.ts";
 
 export default function KasseScreen() {
@@ -54,6 +75,8 @@ export default function KasseScreen() {
   const [openAmount, setOpenAmount] = useState<{ product: Product | null; text: string } | null>(null);
   const [weight, setWeight] = useState<{ product: Product; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
+  const [parking, setParking] = useState(false);
+  const [parkedOpen, setParkedOpen] = useState(false);
 
   /**
    * Kacheln: Pfandartikel gehoeren nicht dazu. Sie werden ueber den Artikel
@@ -176,7 +199,12 @@ export default function KasseScreen() {
             />
           </View>
 
-          <CartPanel onPay={() => setPaying(true)} wide={wide} />
+          <CartPanel
+            onPark={() => setParking(true)}
+            onPay={() => setPaying(true)}
+            onShowParked={() => setParkedOpen(true)}
+            wide={wide}
+          />
         </View>
       </SafeAreaView>
 
@@ -224,6 +252,9 @@ export default function KasseScreen() {
           router.push(`/bon/${orderId}`);
         }}
       />
+
+      <ParkDialog open={parking} onClose={() => setParking(false)} />
+      <ParkedSheet open={parkedOpen} onClose={() => setParkedOpen(false)} />
     </Screen>
   );
 }
@@ -311,10 +342,25 @@ function StatusBar() {
   if (kasse.outboxPending > 0) {
     messages.push({ tone: "info", text: `${kasse.outboxPending} Beleg(e) noch nicht uebertragen.` });
   }
-  if (messages.length === 0) return null;
-
   return (
     <View style={styles.statusBar}>
+      {/*
+        Wer angemeldet ist, steht immer da. Am Verkaufsstand wechseln sich
+        Leute an einem Geraet ab, und ein Beleg auf den falschen Bediener ist
+        hinterher nicht mehr zu berichtigen.
+      */}
+      {kasse.user ? (
+        <View style={styles.operatorRow}>
+          <Text style={styles.operatorName} numberOfLines={1}>
+            {kasse.user.name}
+          </Text>
+          {kasse.loginRequired ? (
+            <Button label="Sperren" onPress={() => void kasse.lock()} />
+          ) : (
+            <Badge label="ohne Anmeldung" tone="warning" />
+          )}
+        </View>
+      ) : null}
       {messages.map((message) => (
         <Notice key={message.text} tone={message.tone}>
           {message.text}
@@ -324,10 +370,21 @@ function StatusBar() {
   );
 }
 
-function CartPanel({ onPay, wide }: { onPay: () => void; wide: boolean }) {
+function CartPanel({
+  onPark,
+  onPay,
+  onShowParked,
+  wide,
+}: {
+  onPark: () => void;
+  onPay: () => void;
+  onShowParked: () => void;
+  wide: boolean;
+}) {
   const kasse = useKasse();
   const { totals, cart } = kasse;
   const empty = totals.lines.length === 0;
+  const maySell = kasse.can("SELL");
 
   return (
     <View style={[styles.cart, wide ? styles.cartWide : styles.cartNarrow]}>
@@ -370,7 +427,150 @@ function CartPanel({ onPay, wide }: { onPay: () => void; wide: boolean }) {
 
       <View style={styles.cartActions}>
         <Button label="Leeren" onPress={() => kasse.clear()} disabled={empty} style={styles.flex} />
-        <Button label="Bezahlen" onPress={onPay} tone="accent" disabled={empty} style={styles.payButton} />
+        {/*
+          Parken steht neben dem Bezahlen, nicht in einem Menue: der Fall
+          kommt am Stand dauernd vor - einer holt noch etwas, der Naechste
+          moechte zahlen. Wer dafuer suchen muss, erfasst neu.
+        */}
+        <Button label="Parken" onPress={onPark} disabled={empty || !maySell} style={styles.flex} />
+        <Button label="Bezahlen" onPress={onPay} tone="accent" disabled={empty || !maySell} style={styles.payButton} />
+      </View>
+
+      {kasse.parked.length > 0 ? (
+        <Button
+          label={`Geparkt: ${kasse.parked.length}`}
+          onPress={onShowParked}
+          subtitle={kasse.parked.map((sale) => sale.label).join(", ").slice(0, 60)}
+        />
+      ) : null}
+      {!maySell ? <Muted>Kassieren ist fuer Ihren Zugang nicht freigegeben.</Muted> : null}
+    </View>
+  );
+}
+
+/**
+ * Vorgang parken.
+ *
+ * Die Bezeichnung ist Pflicht und wird vom Kern geprueft: ein geparkter Vorgang
+ * ohne Namen ist beim Fortsetzen von den anderen nicht zu unterscheiden, und
+ * dann wird der falsche Kunde abgerechnet.
+ */
+function ParkDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const kasse = useKasse();
+  const [label, setLabel] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const submit = (): void => {
+    const checked = checkRequiredText(label, { label: "Die Bezeichnung", max: 60 });
+    if (!checked.ok) {
+      setProblem(checked.reason);
+      return;
+    }
+    void (async () => {
+      try {
+        await kasse.park(checked.value);
+        setLabel("");
+        setProblem(null);
+        onClose();
+      } catch (issue) {
+        setProblem((issue as Error).message);
+      }
+    })();
+  };
+
+  return (
+    <Sheet
+      footer={
+        <View style={styles.cartActions}>
+          <Button label="Abbrechen" onPress={onClose} style={styles.flex} />
+          <Button label="Parken" loading={kasse.busy} onPress={submit} style={styles.flex} tone="accent" />
+        </View>
+      }
+      onClose={onClose}
+      open={open}
+      title="Vorgang parken"
+    >
+      <Muted>
+        Der Bildschirm wird frei fuer den naechsten Kunden. Der geparkte Vorgang behaelt seine Startzeit und seine
+        TSE-Transaktion - auf dem spaeteren Bon steht der Beginn der Erfassung, nicht der des Bezahlens.
+      </Muted>
+      <Field
+        label="Bezeichnung"
+        onChangeText={(value) => {
+          setProblem(null);
+          setLabel(value);
+        }}
+        placeholder="z. B. Tisch 4, blaue Jacke"
+        problem={problem}
+        value={label}
+      />
+      <Muted>
+        {kasse.parked.length} von {MAX_PARKED_SALES} Plaetzen belegt.
+      </Muted>
+    </Sheet>
+  );
+}
+
+/** Liste der geparkten Vorgaenge: fortsetzen oder verwerfen. */
+function ParkedSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const kasse = useKasse();
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const act = (action: () => Promise<unknown>): void => {
+    void (async () => {
+      try {
+        await action();
+        setProblem(null);
+        onClose();
+      } catch (issue) {
+        setProblem((issue as Error).message);
+      }
+    })();
+  };
+
+  return (
+    <Sheet onClose={onClose} open={open} title="Geparkte Vorgaenge" wide>
+      {problem ? <Notice tone="danger">{problem}</Notice> : null}
+      {kasse.parked.length === 0 ? <Muted>Kein Vorgang geparkt.</Muted> : null}
+      {kasse.parked.map((sale) => (
+        <ParkedRow
+          key={sale.id}
+          onDiscard={() => act(() => kasse.discardParked(sale))}
+          onResume={() => act(() => kasse.resume(sale))}
+          sale={sale}
+        />
+      ))}
+      <Muted>
+        Fortsetzen laedt den Vorgang auf den Kassenbildschirm. Das geht nur, wenn dort gerade nichts erfasst ist -
+        sonst vermischen sich zwei Kunden.
+      </Muted>
+    </Sheet>
+  );
+}
+
+function ParkedRow({
+  sale,
+  onResume,
+  onDiscard,
+}: {
+  sale: ParkedSale;
+  onResume: () => void;
+  onDiscard: () => void;
+}) {
+  const kasse = useKasse();
+  const minutes = parkedMinutes(sale, kasse.now());
+  return (
+    <View>
+      <ListRow
+        subtitle={`${sale.lineCount} Position(en) · seit ${minutes} Minute(n)${sale.tseFailure ? " · TSE-Ausfall" : ""}`}
+        title={sale.label}
+        // Ein Vorgang, der seit einer Stunde liegt, ist meist vergessen worden.
+        tone={minutes > 60 ? "warning" : "normal"}
+        value={formatEuro(sale.total)}
+      />
+      <View style={styles.cartActions}>
+        <Button label="Fortsetzen" onPress={onResume} style={styles.flex} tone="accent" />
+        <Button label="Verwerfen" onPress={onDiscard} style={styles.flex} tone="danger" />
       </View>
     </View>
   );
@@ -444,20 +644,53 @@ function PayDialog({
   const kasse = useKasse();
   const total = kasse.totals.total;
   const [tendered, setTendered] = useState("");
+  const [customer, setCustomer] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [cashProblem, setCashProblem] = useState<string | null>(null);
+  const [customerProblem, setCustomerProblem] = useState<string | null>(null);
 
   const given = parseAmount(tendered);
   const change = given == null ? null : given - total;
 
   const submit = async (payments: readonly PaymentIntent[]) => {
     setError(null);
+    // Der Kundenname ist freiwillig, wird aber geprueft: er landet auf dem
+    // Beleg, und ein Beleg ist unveraenderlich.
+    const checkedCustomer = checkCustomerName(customer);
+    if (!checkedCustomer.ok) {
+      setCustomerProblem(checkedCustomer.reason);
+      return;
+    }
     try {
-      const order = await kasse.pay(payments);
+      const order = await kasse.pay(payments, { customerName: checkedCustomer.value });
       setTendered("");
+      setCustomer("");
+      setCustomerProblem(null);
+      setCashProblem(null);
       onPaid(order.id);
     } catch (issue) {
       setError((issue as Error).message);
     }
+  };
+
+  /** Bargeld abschliessen - mit Pruefung der Eingabe, nicht mit einem Rueckfall. */
+  const submitCash = (): void => {
+    if (tendered.trim() === "") {
+      // Leer heisst "passend gegeben" - der haeufigste Fall am Stand.
+      void submit([{ method: "CASH", amount: total, tendered: total }]);
+      return;
+    }
+    const checked = checkAmount(tendered, { label: "Der gegebene Betrag" });
+    if (!checked.ok) {
+      setCashProblem(checked.reason);
+      return;
+    }
+    if (checked.value < total) {
+      setCashProblem(`Der gegebene Betrag liegt ${formatAmount(total - checked.value)} unter der Summe.`);
+      return;
+    }
+    setCashProblem(null);
+    void submit([{ method: "CASH", amount: total, tendered: checked.value }]);
   };
 
   /** Passende Scheine als Vorschlag - schneller als Tippen. */
@@ -490,10 +723,15 @@ function PayDialog({
             ))}
           </View>
           <Field
+            hint="Leer lassen heisst: passend gegeben."
             keyboardType="decimal-pad"
             label="Gegeben"
-            onChangeText={setTendered}
+            onChangeText={(value) => {
+              setCashProblem(null);
+              setTendered(value);
+            }}
             placeholder={formatAmount(total)}
+            problem={cashProblem}
             value={tendered}
           />
           {change != null && change >= 0 ? (
@@ -502,16 +740,8 @@ function PayDialog({
               <Text style={styles.totalAmount}>{formatAmount(change)}</Text>
             </View>
           ) : null}
-          {change != null && change < 0 ? <Muted>Der gegebene Betrag ist zu niedrig.</Muted> : null}
 
-          <Button
-            label="Bar abschliessen"
-            loading={kasse.busy}
-            onPress={() =>
-              void submit([{ method: "CASH", amount: total, tendered: given != null && given >= total ? given : total }])
-            }
-            tone="success"
-          />
+          <Button label="Bar abschliessen" loading={kasse.busy} onPress={submitCash} tone="success" />
 
           <View style={styles.divider} />
 
@@ -528,9 +758,23 @@ function PayDialog({
             ))}
           </View>
           <Muted>
-            Kartenzahlung wird derzeit nur gebucht, nicht an ein Terminal gesendet. Die Anbindung ist
-            vorgesehen (siehe docs/ROADMAP.md).
+            Kartenzahlung wird derzeit nur gebucht, nicht an ein Terminal gesendet. Die Einrichtung dafuer steht
+            unter Einstellungen › Kassen.
           </Muted>
+
+          <View style={styles.divider} />
+
+          <Field
+            hint="Freiwillig. Steht auf dem Beleg - hilfreich, wenn der Kunde ihn fuer die Buchhaltung braucht."
+            label="Kundenname"
+            onChangeText={(value) => {
+              setCustomerProblem(null);
+              setCustomer(value);
+            }}
+            placeholder="z. B. Baubetrieb Harms"
+            problem={customerProblem}
+            value={customer}
+          />
 
           <View style={styles.divider} />
           <Button label="Abbrechen" onPress={onClose} />
@@ -594,6 +838,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   centered: { alignItems: "center", justifyContent: "center" },
   statusBar: { gap: space.sm, padding: space.md },
+  operatorRow: { alignItems: "center", flexDirection: "row", gap: space.sm, justifyContent: "space-between" },
+  operatorName: { color: colors.text, flex: 1, fontSize: font.label, fontWeight: "700" },
   body: { flex: 1, padding: space.md },
   bodyWide: { flexDirection: "row", gap: space.lg },
   breadcrumb: { alignItems: "center", gap: space.xs, paddingVertical: space.sm },
