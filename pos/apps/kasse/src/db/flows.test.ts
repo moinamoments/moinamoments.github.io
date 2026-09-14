@@ -16,7 +16,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  NO_ATTEMPTS,
   ONE,
+  attemptLogin,
+  buildAuditEntry,
   buildCashMovement,
   buildCategoryTree,
   buildClosing,
@@ -45,11 +48,22 @@ import {
   movementsForOrder,
   openDay,
   outboxKey,
+  parkSale,
+  prepareEmail,
+  prepareSms,
+  recordDelivery,
+  resumeSale,
+  hashPin,
+  summarizeAudit,
+  summarizeCashbook,
+  userCan,
+  withCapability,
   renderReceiptText,
   sequentialIds,
   setServiceMode,
   stockState,
   MockTse,
+  type AuditEvent,
   type Category,
   type Device,
   type Order,
@@ -62,16 +76,27 @@ import {
 import { openTestDb, type TestDb } from "./testing/nodeDb.ts";
 import { ensureSeeded } from "../state/seed.ts";
 import {
+  appendAudit,
+  appendCashMovement,
+  appendDelivery,
   applyStockMovement,
   countProductsInCategory,
   deactivateCategory,
   deactivateProduct,
+  deleteParkedSale,
   getDevice,
+  getLoginAttempts,
+  getUser,
   getOrder,
   getStore,
   getTenant,
+  listAudit,
+  listCashMovements,
   listCategories,
+  listDeliveries,
+  listOpenCashMovements,
   listOpenForClosing,
+  listParkedSales,
   listProducts,
   listRecentOrders,
   listStockMovements,
@@ -82,7 +107,10 @@ import {
   saveCategory,
   saveClosing,
   saveDevice,
+  saveLoginAttempts,
   saveOrder,
+  saveParkedSale,
+  saveUser,
   saveProduct,
   saveTenant,
   upsertOutboxEntry,
@@ -864,3 +892,536 @@ function containsSequence(haystack: Uint8Array, needle: readonly number[]): bool
   }
   return false;
 }
+
+// --- Anmeldung mit PIN ----------------------------------------------------
+
+test("PIN setzen, anmelden und die falsche PIN abweisen", async () => {
+  const base = await setup();
+  try {
+    // Die Ersteinrichtung legt den Inhaber ohne PIN an: beim ersten Start soll
+    // niemand ausgesperrt sein, der die Kasse gerade aufbaut.
+    assert.equal(base.user.pinHash, null);
+    const fresh = await getLoginAttempts(base.db, base.user.id, base.device.id);
+    assert.deepEqual(fresh, NO_ATTEMPTS);
+    assert.equal(attemptLogin(base.user, "1234", fresh, NOW).result, "NO_PIN_SET");
+
+    // Wenige Runden im Test: 60.000 Runden je Anmeldeversuch wuerden die
+    // Testlaufzeit bestimmen, nicht die Aussage. In der App gilt PIN_ITERATIONS.
+    await saveUser(base.db, { ...base.user, pinHash: hashPin("4711", { iterations: 1000 }) }, { pinSetAt: NOW });
+    const withPin = (await getUser(base.db, base.user.id))!;
+    assert.ok(withPin.pinHash?.startsWith("pbkdf2$sha256$1000$"), "die Rundenzahl steht im Hash");
+    assert.ok(!withPin.pinHash?.includes("4711"), "die PIN selbst steht nirgends");
+
+    assert.equal(attemptLogin(withPin, "4711", NO_ATTEMPTS, NOW).result, "OK");
+    const wrong = attemptLogin(withPin, "0000", NO_ATTEMPTS, NOW);
+    assert.equal(wrong.result, "WRONG_PIN");
+    assert.equal(wrong.state.failedAttempts, 1);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("fuenf Fehlversuche sperren, die Sperre ueberlebt den Neustart", async () => {
+  const base = await setup();
+  try {
+    await saveUser(base.db, { ...base.user, pinHash: hashPin("4711", { iterations: 1000 }) }, { pinSetAt: NOW });
+    const user = (await getUser(base.db, base.user.id))!;
+
+    let state = await getLoginAttempts(base.db, user.id, base.device.id);
+    let outcome = attemptLogin(user, "0000", state, NOW);
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      outcome = attemptLogin(user, "0000", state, NOW);
+      state = outcome.state;
+      await saveLoginAttempts(base.db, user.id, base.device.id, state, NOW);
+    }
+    assert.equal(outcome.result, "LOCKED", "der fuenfte Fehlversuch sperrt");
+
+    // Die Sperre steht in der Datenbank, nicht im Arbeitsspeicher: ein
+    // Neustart der App darf sie nicht aufheben - sonst ist sie wertlos.
+    const stored = await getLoginAttempts(base.db, user.id, base.device.id);
+    assert.ok(stored.lockedUntil, "die Sperre ist gespeichert");
+    // Nach der Sperre stehen wieder volle Versuche zur Verfuegung, aber die
+    // naechste Sperre dauert laenger - das haelt `lockCount` fest.
+    assert.equal(stored.failedAttempts, 0);
+    assert.equal(stored.lockCount, 1);
+    assert.equal(attemptLogin(user, "4711", stored, NOW).result, "LOCKED", "auch die richtige PIN kommt jetzt nicht durch");
+
+    // Nach Ablauf der Sperre zaehlt die richtige PIN wieder.
+    const later = "2026-09-26T09:01:00+02:00";
+    const afterLock = attemptLogin(user, "4711", stored, later);
+    assert.equal(afterLock.result, "OK");
+    await saveLoginAttempts(base.db, user.id, base.device.id, afterLock.state, later);
+    assert.deepEqual(await getLoginAttempts(base.db, user.id, base.device.id), NO_ATTEMPTS);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("ein deaktivierter Zugang loest keine Sperre aus", async () => {
+  const base = await setup();
+  try {
+    // Sonst koennte ein ausgeschiedener Mitarbeiter mit seiner alten PIN den
+    // Zugang eines aktiven Bedieners sperren.
+    const gone = { ...base.user, pinHash: hashPin("4711", { iterations: 1000 }), active: false };
+    const outcome = attemptLogin(gone, "0000", NO_ATTEMPTS, NOW);
+    assert.equal(outcome.result, "INACTIVE");
+    assert.equal(outcome.state.failedAttempts, 0);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("Rechteabweichung ueberlebt das Speichern und wirkt", async () => {
+  const base = await setup();
+  try {
+    // Der Fall, den ein Betrieb wirklich hat: eine Aushilfe darf Artikel
+    // pflegen, aber weiterhin nicht stornieren.
+    const helper: User = {
+      id: newId(), tenantId: base.tenant.id, name: "Aushilfe Lena",
+      role: "CASHIER", active: true, pinHash: null, permissionOverrides: null,
+    };
+    await saveUser(base.db, helper);
+    const granted = withCapability((await getUser(base.db, helper.id))!, "MANAGE_PRODUCTS", true);
+    await saveUser(base.db, { ...helper, permissionOverrides: granted });
+
+    const reloaded = (await getUser(base.db, helper.id))!;
+    assert.equal(userCan(reloaded, "MANAGE_PRODUCTS"), true);
+    assert.equal(userCan(reloaded, "VOID_RECEIPT"), false, "Storno bleibt gesperrt");
+    assert.equal(userCan(reloaded, "SELL"), true, "Kassieren kann sie weiterhin");
+
+    // Ein Recht, das die Rolle schon hat, wird nicht als Abweichung
+    // gespeichert - sonst sammelt sich Datenmuell an, der bei einem
+    // Rollenwechsel falsch weiterwirkt.
+    assert.equal(withCapability(reloaded, "SELL", true)["SELL"], undefined);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("Bediener wird deaktiviert, nicht geloescht - und verliert damit alle Rechte", async () => {
+  const base = await setup();
+  try {
+    const helper: User = {
+      id: newId(), tenantId: base.tenant.id, name: "Aushilfe Tom",
+      role: "MANAGER", active: true, pinHash: null, permissionOverrides: null,
+    };
+    await saveUser(base.db, helper);
+    await saveUser(base.db, { ...helper, active: false });
+
+    assert.equal((await listUsers(base.db)).some((item) => item.id === helper.id), false);
+    const inactive = (await getUser(base.db, helper.id))!;
+    assert.equal(inactive.active, false);
+    assert.equal(userCan(inactive, "SELL"), false, "auch Kassieren ist weg");
+    assert.ok((await listUsers(base.db, true)).some((item) => item.id === helper.id), "fuer alte Belege bleibt er lesbar");
+  } finally {
+    base.db.close();
+  }
+});
+
+test("beschaedigte Rechteabweichungen lassen die Rolle gelten", async () => {
+  const base = await setup();
+  try {
+    // Kein erfundener Fall: eine halb geschriebene Datei, ein abgebrochener
+    // Abgleich. Wichtig ist die Richtung - im Zweifel gilt die Rolle, nicht
+    // ein zufaellig erteiltes Recht.
+    base.db.handle.exec(`UPDATE app_user SET permission_overrides = '{kaputt' WHERE id = '${base.user.id}'`);
+    const user = (await getUser(base.db, base.user.id))!;
+    assert.equal(user.permissionOverrides, null);
+    assert.equal(userCan(user, "SELL"), true, "die Rolle wirkt weiter");
+
+    base.db.handle.exec(`UPDATE app_user SET permission_overrides = '{"SELL":"ja"}' WHERE id = '${base.user.id}'`);
+    assert.equal((await getUser(base.db, base.user.id))!.permissionOverrides, null);
+  } finally {
+    base.db.close();
+  }
+});
+
+// --- Pruefprotokoll -------------------------------------------------------
+
+test("Pruefprotokoll ist nur anfuegbar", async () => {
+  const base = await setup();
+  try {
+    await appendAudit(base.db, buildAuditEntry({
+      id: newId(), tenantId: base.tenant.id, deviceId: base.device.id,
+      userId: base.user.id, userName: base.user.name, event: "RECEIPT_VOIDED",
+      subject: "K1-000001", detail: "Storno auf Wunsch des Kunden", amount: -450,
+      createdAt: NOW,
+    }));
+
+    assert.throws(() => base.db.handle.exec("UPDATE audit_log SET detail = 'war nicht ich'"), /nicht geaendert/);
+    assert.throws(() => base.db.handle.exec("DELETE FROM audit_log"), /nicht geloescht/);
+
+    const entries = await listAudit(base.db);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.event, "RECEIPT_VOIDED");
+    assert.equal(entries[0]?.amount, -450);
+    assert.equal(entries[0]?.userName, base.user.name);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("Protokoll filtert nach Ereignis und wertet Storni je Bediener aus", async () => {
+  const base = await setup();
+  try {
+    const write = async (event: AuditEvent, userName: string, amount: number | null): Promise<void> => {
+      await appendAudit(base.db, buildAuditEntry({
+        id: newId(), tenantId: base.tenant.id, deviceId: base.device.id,
+        userId: base.user.id, userName, event, amount, createdAt: NOW,
+      }));
+    };
+    await write("LOGIN_OK", "Petra", null);
+    await write("RECEIPT_VOIDED", "Lena", -1200);
+    await write("RECEIPT_VOIDED", "Lena", -800);
+    await write("RECEIPT_VOIDED", "Tom", -300);
+    await write("LOGIN_FAILED", "Lena", null);
+
+    assert.equal((await listAudit(base.db, { events: ["RECEIPT_VOIDED"] })).length, 3);
+
+    const summary = summarizeAudit(await listAudit(base.db));
+    assert.equal(summary.totalEntries, 5);
+    assert.equal(summary.failedLogins, 1);
+    // Nach Betrag sortiert: wer am meisten storniert hat, steht oben. Das ist
+    // die Frage, die am Monatsende gestellt wird.
+    assert.equal(summary.voidsByUser[0]?.userName, "Lena");
+    assert.equal(summary.voidsByUser[0]?.amount, 2000);
+    assert.equal(summary.voidsByUser[0]?.count, 2);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("ein Geheimnis kommt nicht ins Protokoll", async () => {
+  const base = await setup();
+  try {
+    assert.throws(
+      () => buildAuditEntry({
+        id: newId(), tenantId: base.tenant.id, deviceId: base.device.id,
+        event: "SETTINGS_CHANGED", detail: `PIN neu: ${hashPin("4711", { iterations: 1000 })}`,
+        createdAt: NOW,
+      }),
+      /PIN-Pruefwert/,
+    );
+    assert.equal((await listAudit(base.db)).length, 0, "und zwar bevor etwas geschrieben wird");
+  } finally {
+    base.db.close();
+  }
+});
+
+// --- Bons parken ----------------------------------------------------------
+
+test("Vorgang parken, zwischendurch kassieren, dann fortsetzen", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const deposits = createDepositCatalog(products);
+    const kaffee = find(products, "Kaffee");
+
+    // Erster Kunde ist erfasst, will aber noch etwas holen.
+    const open = await beginTransaction(ctx);
+    const cart = addProduct(emptyCart(base.tenant.id, "TAKEAWAY"), kaffee, { id: newId(), quantity: 2 * ONE });
+    const total = cartTotals(cart, { deposits }).total;
+    const parked = await parkSale({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      userId: base.user.id, label: "Tisch 4", cart, open, parkedAt: NOW, total, existing: [],
+      tse: ctx.tse, tseClientId: base.device.tseClientId, processData: "Bestellung",
+    });
+    await saveParkedSale(base.db, parked);
+
+    // Zweiter Kunde bezahlt dazwischen.
+    await sell(base, ctx, (c) => addProduct(c, kaffee, { id: newId() }), { method: "CASH" });
+
+    const list = await listParkedSales(base.db, base.device.id);
+    assert.equal(list.length, 1);
+    assert.equal(list[0]?.label, "Tisch 4");
+    assert.equal(list[0]?.total, total);
+    assert.equal(list[0]?.lineCount, 1);
+    assert.equal(list[0]?.cart.lines[0]?.quantity, 2 * ONE, "der Warenkorb kommt unveraendert zurueck");
+
+    // Fortsetzen: Startzeit und TSE-Transaktion sind die des Originals.
+    const resumed = resumeSale(list[0]!);
+    assert.equal(resumed.open.startedAt, open.startedAt);
+    assert.equal(resumed.open.tseStart?.transactionNumber, open.tseStart?.transactionNumber);
+
+    const sequence = await nextSequence(base.db, base.device.id, "receipt");
+    const { order } = await finishTransaction(
+      ctx, resumed.open, resumed.cart, [{ method: "CASH", amount: total, tendered: total }],
+      { sequence, deposits },
+    );
+    await saveOrder(base.db, order);
+    await deleteParkedSale(base.db, parked.id);
+
+    assert.equal(order.startedAt, open.startedAt, "der Beleg traegt den Beginn der Erfassung");
+    assert.equal(order.total, total);
+    assert.equal((await listParkedSales(base.db, base.device.id)).length, 0);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("zwei geparkte Vorgaenge duerfen nicht gleich heissen - auch nicht anders geschrieben", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const kaffee = find(await listProducts(base.db), "Kaffee");
+
+    const park = async (label: string): Promise<void> => {
+      const open = await beginTransaction(ctx);
+      const cart = addProduct(emptyCart(base.tenant.id, "TAKEAWAY"), kaffee, { id: newId() });
+      const sale = await parkSale({
+        id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+        userId: base.user.id, label, cart, open, parkedAt: NOW, total: 250,
+        existing: await listParkedSales(base.db, base.device.id),
+      });
+      await saveParkedSale(base.db, sale);
+    };
+
+    await park("Tisch 4");
+    // Der Kern lehnt es ab, bevor die Datenbank es tut ...
+    await assert.rejects(() => park("tisch 4"), /schon vergeben/);
+    // ... und die Datenbank haelt es zusaetzlich fest, falls jemand am Kern
+    // vorbei schreibt.
+    assert.throws(
+      () => base.db.handle.exec(
+        `INSERT INTO parked_sale (id, tenant_id, store_id, device_id, user_id, label, cart_json,
+            started_at, parked_at, total, line_count)
+         VALUES ('x','${base.tenant.id}','${base.store.id}','${base.device.id}','u','TISCH 4','{}','${NOW}','${NOW}',0,0)`,
+      ),
+      /UNIQUE/,
+    );
+  } finally {
+    base.db.close();
+  }
+});
+
+test("ein leerer Vorgang wird nicht geparkt", async () => {
+  const base = await setup();
+  try {
+    const open = await beginTransaction(context(base));
+    await assert.rejects(
+      () => parkSale({
+        id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+        userId: base.user.id, label: "Leer", cart: emptyCart(base.tenant.id, "TAKEAWAY"),
+        open, parkedAt: NOW, total: 0, existing: [],
+      }),
+      /leerer Vorgang/,
+    );
+    assert.equal((await listParkedSales(base.db, base.device.id)).length, 0);
+  } finally {
+    base.db.close();
+  }
+});
+
+// --- Kassenbuch -----------------------------------------------------------
+
+test("Tageseroeffnung, Entnahme und Einlage stehen im Kassenbuch", async () => {
+  const base = await setup();
+  try {
+    const opening = openDay({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      cashCount: [{ denomination: 5000, count: 2 }, { denomination: 1000, count: 5 }],
+      userId: base.user.id, createdAt: NOW,
+    });
+    assert.equal(opening.amount, 15_000);
+    await appendCashMovement(base.db, opening);
+
+    await appendCashMovement(base.db, buildCashMovement({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      type: "WITHDRAWAL", amount: 5000, reason: "Privatentnahme Petra",
+      userId: base.user.id, createdAt: NOW,
+    }));
+    await appendCashMovement(base.db, buildCashMovement({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      type: "DEPOSIT", amount: 2000, reason: "Wechselgeld nachgelegt",
+      userId: base.user.id, createdAt: NOW,
+    }));
+
+    const movements = await listOpenCashMovements(base.db, base.device.id);
+    assert.equal(movements.length, 3);
+    // Das Zaehlprotokoll der Eroeffnung wird mitgespeichert - ohne es ist der
+    // Anfangsbestand eine Behauptung.
+    assert.equal(movements[0]?.cashCount?.length, 2);
+    assert.equal(movements[1]?.amount, -5000, "die Entnahme ist negativ gespeichert");
+    assert.equal(movements[2]?.cashCount, undefined, "ohne Zaehlung kein leeres Protokoll");
+
+    const summary = summarizeCashbook(movements);
+    assert.equal(summary.opening, 15_000);
+    assert.equal(summary.withdrawals, -5000);
+    assert.equal(summary.deposits, 2000);
+    assert.equal(summary.netMovements, -3000);
+    assert.equal(summary.opening + summary.netMovements, 12_000, "Bargeldbestand ohne Verkaeufe");
+  } finally {
+    base.db.close();
+  }
+});
+
+test("eine gebuchte Kassenbewegung ist unveraenderlich", async () => {
+  const base = await setup();
+  try {
+    await appendCashMovement(base.db, buildCashMovement({
+      id: "cash-1", tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      type: "WITHDRAWAL", amount: 5000, reason: "Privatentnahme",
+      userId: base.user.id, createdAt: NOW,
+    }));
+
+    assert.throws(() => base.db.handle.exec("UPDATE cash_movement SET amount = -100 WHERE id = 'cash-1'"), /nicht geaendert/);
+    assert.throws(() => base.db.handle.exec("UPDATE cash_movement SET reason = 'Tankquittung' WHERE id = 'cash-1'"), /nicht geaendert/);
+    assert.throws(() => base.db.handle.exec("DELETE FROM cash_movement"), /nicht geloescht/);
+
+    // Erlaubt ist genau eine Aenderung: die Zuordnung zum Kassenabschluss.
+    base.db.handle.exec("UPDATE cash_movement SET closing_id = 'abschluss-1' WHERE id = 'cash-1'");
+    assert.equal((await listOpenCashMovements(base.db, base.device.id)).length, 0);
+    assert.equal((await listCashMovements(base.db, base.device.id)).length, 1, "im Journal bleibt sie");
+  } finally {
+    base.db.close();
+  }
+});
+
+test("eine Entnahme ohne Grund wird abgewiesen", async () => {
+  const base = await setup();
+  try {
+    assert.throws(
+      () => buildCashMovement({
+        id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+        type: "WITHDRAWAL", amount: 5000, reason: "   ", userId: base.user.id, createdAt: NOW,
+      }),
+      /braucht einen Grund/,
+    );
+    assert.equal((await listCashMovements(base.db, base.device.id)).length, 0);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("der Kassenabschluss zieht die Bewegungen der Schicht mit", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const order = await sell(base, ctx, (c) => addProduct(c, find(products, "Kaffee"), { id: newId() }), { method: "CASH" });
+
+    const withdrawal = buildCashMovement({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      type: "WITHDRAWAL", amount: 1000, reason: "Einkauf Milch",
+      userId: base.user.id, createdAt: NOW,
+    });
+    await appendCashMovement(base.db, withdrawal);
+
+    const report = buildClosing({
+      tenant: base.tenant, store: base.store, device: base.device, userId: base.user.id,
+      closingId: newId(), number: await nextSequence(base.db, base.device.id, "closing"),
+      from: order.startedAt, to: "2026-09-26T22:00:00+02:00", createdAt: "2026-09-26T22:00:05+02:00",
+      orders: [order], cashMovements: [withdrawal], cashCount: [],
+    });
+    await saveClosing(base.db, report.closing, JSON.stringify(report));
+
+    // Nach dem Abschluss ist die Schicht leer - die naechste faengt bei null
+    // an und die Entnahme wird nicht zweimal gerechnet.
+    assert.equal((await listOpenCashMovements(base.db, base.device.id)).length, 0);
+    assert.equal((await listCashMovements(base.db, base.device.id)).length, 1, "im Journal bleibt sie");
+  } finally {
+    base.db.close();
+  }
+});
+
+// --- Kundenname und Bonversand -------------------------------------------
+
+test("Kundenname steht auf dem Beleg und wird gespeichert", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const deposits = createDepositCatalog(products);
+    const open = await beginTransaction(ctx);
+    const cart = addProduct(emptyCart(base.tenant.id, "TAKEAWAY"), find(products, "Kaffee"), { id: newId() });
+    const total = cartTotals(cart, { deposits }).total;
+    const sequence = await nextSequence(base.db, base.device.id, "receipt");
+    const { order } = await finishTransaction(
+      ctx, open, cart, [{ method: "CASH", amount: total, tendered: total }],
+      { sequence, deposits, customerName: "Baubetrieb Harms" },
+    );
+    await saveOrder(base.db, order);
+
+    const stored = (await getOrder(base.db, order.id))!;
+    assert.equal(stored.customerName, "Baubetrieb Harms");
+
+    const view = buildReceiptView(stored, { tenant: base.tenant, store: base.store, device: base.device });
+    assert.equal(view.customerName, "Baubetrieb Harms");
+    const text = renderReceiptText(view, 32);
+    assert.ok(text.includes("Kunde: Baubetrieb Harms"));
+    // Auch auf schmalem Papier bleibt keine Zeile zu lang.
+    for (const line of text.split("\n")) assert.ok(line.length <= 32, `zu lang: "${line}"`);
+  } finally {
+    base.db.close();
+  }
+});
+
+test("ein Beleg ohne Kundenname bleibt ohne Kundenzeile", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const order = await sell(base, ctx, (c) => addProduct(c, find(products, "Kaffee"), { id: newId() }), { method: "CASH" });
+    const view = buildReceiptView(order, { tenant: base.tenant, store: base.store, device: base.device });
+    assert.equal(view.customerName, null);
+    assert.ok(!renderReceiptText(view, 42).includes("Kunde:"));
+  } finally {
+    base.db.close();
+  }
+});
+
+test("Bonversand per Mail und SMS wird protokolliert - mit verkuerztem Empfaenger", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const order = await sell(base, ctx, (c) => addProduct(c, find(products, "Kaffee"), { id: newId() }), { method: "CASH" });
+    const view = buildReceiptView(order, { tenant: base.tenant, store: base.store, device: base.device });
+
+    const mail = prepareEmail(base.tenant, view, { email: "Petra.Harms@Beispiel.de", name: "Petra Harms" });
+    // Die Domain wird kleingeschrieben, der Teil vor dem @ bleibt wie getippt:
+    // Rechnernamen sind gross-/kleinschreibungsunabhaengig, Postfachnamen nicht.
+    assert.equal(mail.to, "Petra.Harms@beispiel.de");
+    assert.ok(mail.url.startsWith("mailto:Petra.Harms%40beispiel.de?"), mail.url);
+    await appendDelivery(base.db, newId(), base.tenant.id,
+      recordDelivery(order, mail, { sentAt: NOW, via: "device", ok: true }));
+
+    const sms = prepareSms(base.tenant, view, { phone: "0170 1234567" });
+    assert.ok(sms.url.startsWith("sms:%2B49170"), sms.url);
+    assert.ok(sms.body.length <= 160, "eine SMS bleibt eine SMS");
+    await appendDelivery(base.db, newId(), base.tenant.id,
+      recordDelivery(order, sms, { sentAt: NOW, via: "device", ok: false, error: "SMS-App nicht vorhanden" }));
+
+    const records = await listDeliveries(base.db, order.id);
+    assert.equal(records.length, 2);
+    // Gespeichert ist der Nachweis, nicht die Adresse: aus dem verkuerzten
+    // Empfaenger laesst sich kein Kundenstamm bauen.
+    assert.equal(records[0]?.recipient, "P**********@beispiel.de");
+    assert.ok(!records[0]?.recipient.toLowerCase().includes("harms"));
+    assert.equal(records[0]?.ok, true);
+    assert.equal(records[1]?.channel, "SMS");
+    assert.equal(records[1]?.ok, false);
+    assert.equal(records[1]?.error, "SMS-App nicht vorhanden");
+    assert.ok(!records[1]?.recipient.includes("1234567"));
+  } finally {
+    base.db.close();
+  }
+});
+
+test("eine unbrauchbare Adresse oeffnet keine Mail-App", async () => {
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const order = await sell(base, ctx, (c) => addProduct(c, find(products, "Kaffee"), { id: newId() }), { method: "CASH" });
+    const view = buildReceiptView(order, { tenant: base.tenant, store: base.store, device: base.device });
+
+    assert.throws(() => prepareEmail(base.tenant, view, { email: "petra@" }), /E-Mail/);
+    assert.throws(() => prepareEmail(base.tenant, view, { email: "" }), /E-Mail/);
+    assert.throws(() => prepareSms(base.tenant, view, { phone: "12" }), /Telefonnummer/);
+    assert.equal((await listDeliveries(base.db, order.id)).length, 0, "nichts protokolliert");
+  } finally {
+    base.db.close();
+  }
+});

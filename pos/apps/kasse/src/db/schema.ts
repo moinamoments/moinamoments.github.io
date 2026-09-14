@@ -80,8 +80,102 @@ export const MIGRATIONS: readonly Migration[] = [
         tenant_id TEXT NOT NULL REFERENCES tenant(id),
         name TEXT NOT NULL,
         role TEXT NOT NULL,
+        -- Abweichungen von der Rolle als JSON-Objekt Recht -> true/false.
+        -- Als JSON und nicht als Tabelle, weil die Rechteliste im Code steht
+        -- (permissions.ts) und eine Tabelle mit Fremdschluessel darauf bei
+        -- jeder neuen Faehigkeit eine Migration braeuchte.
+        permission_overrides TEXT NOT NULL DEFAULT '{}',
         pin_hash TEXT,
+        -- Wann die PIN gesetzt wurde. Nicht fuer einen Zwang zum Wechsel,
+        -- sondern fuer den Hinweis "PIN seit zwei Jahren unveraendert".
+        pin_set_at TEXT,
         active INTEGER NOT NULL DEFAULT 1
+      )`,
+
+      // Fehlversuche je Bediener **und Geraet**. Getrennt je Geraet, weil eine
+      // Sperre sonst von jeder Kasse aus ausgeloest werden koennte - und dann
+      // legt ein falsch getippter PIN am Nebenstand den Hauptstand still.
+      // Diese Tabelle ist Zustand, nicht Protokoll: sie wird ueberschrieben.
+      // Der Nachweis der Fehlversuche steht im Pruefprotokoll.
+      `CREATE TABLE login_attempt (
+        user_id TEXT NOT NULL REFERENCES app_user(id),
+        device_id TEXT NOT NULL,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        lock_count INTEGER NOT NULL DEFAULT 0,
+        locked_until TEXT,
+        last_attempt_at TEXT,
+        PRIMARY KEY (user_id, device_id)
+      )`,
+
+      // Pruefprotokoll: wer hat was am System getan. Nur anfuegen - die
+      // Trigger weiter unten verhindern Aendern und Loeschen. Ohne diese
+      // Tabelle ist "wer hat storniert" nach zwei Wochen nicht mehr zu
+      // beantworten.
+      `CREATE TABLE audit_log (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        user_id TEXT,
+        -- Name als Kopie zum Zeitpunkt des Ereignisses: ein umbenannter oder
+        -- deaktivierter Bediener darf das Protokoll nicht unlesbar machen.
+        user_name TEXT,
+        event TEXT NOT NULL,
+        subject TEXT,
+        detail TEXT,
+        amount INTEGER,
+        created_at TEXT NOT NULL
+      )`,
+
+      // Geparkte Vorgaenge. Der Warenkorb liegt als JSON darin: er ist noch
+      // kein Beleg, also gibt es nichts zu normalisieren - und beim
+      // Fortsetzen wird er unveraendert zurueckgegeben.
+      `CREATE TABLE parked_sale (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenant(id),
+        store_id TEXT NOT NULL REFERENCES store(id),
+        device_id TEXT NOT NULL REFERENCES device(id),
+        user_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        cart_json TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        parked_at TEXT NOT NULL,
+        tse_transaction_number INTEGER,
+        tse_failure TEXT,
+        total INTEGER NOT NULL,
+        line_count INTEGER NOT NULL
+      )`,
+
+      // Kassenbuch: Tageseroeffnung, Einlage, Entnahme, Transit, Trinkgeld.
+      // Nur anfuegen, wie die Belege - eine nachtraeglich geaenderte Entnahme
+      // ist bei einer Kassennachschau der erste Verdacht.
+      `CREATE TABLE cash_movement (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL REFERENCES tenant(id),
+        store_id TEXT NOT NULL REFERENCES store(id),
+        device_id TEXT NOT NULL REFERENCES device(id),
+        type TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        cash_count_json TEXT NOT NULL DEFAULT '[]',
+        user_id TEXT NOT NULL,
+        closing_id TEXT,
+        created_at TEXT NOT NULL
+      )`,
+
+      // Nachweis der Belegausgabe. Gespeichert wird der **verkuerzte**
+      // Empfaenger (anonymizeContact): nachweisbar bleiben muss, dass ein
+      // Beleg herausgegeben wurde, nicht an welche Adresse. Damit entsteht
+      // auch kein Kundenstamm, den niemand bestellt hat.
+      `CREATE TABLE receipt_delivery (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        order_id TEXT NOT NULL REFERENCES sales_order(id),
+        channel TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        sent_at TEXT NOT NULL,
+        via TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        error TEXT
       )`,
 
       // Warengruppen bilden einen Baum. Die Tiefe begrenzt die Anwendung
@@ -154,6 +248,7 @@ export const MIGRATIONS: readonly Migration[] = [
         paid_at TEXT,
         voids_order_id TEXT,
         closing_id TEXT,
+        customer_name TEXT,
         note TEXT,
         tse_json TEXT,
         UNIQUE (device_id, receipt_number)
@@ -266,6 +361,17 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX idx_category_parent ON category (tenant_id, parent_id, sort_order)`,
       `CREATE INDEX idx_stock_product ON stock_movement (product_id, created_at)`,
       `CREATE INDEX idx_stock_created ON stock_movement (created_at)`,
+      // Ohne `rowid` in der Spaltenliste: SQLite laesst das nicht zu, und es
+      // waere auch ueberfluessig - innerhalb eines Indexschluessels stehen die
+      // Eintraege schon in rowid-Reihenfolge, und genau danach wird sortiert.
+      `CREATE INDEX idx_audit_device ON audit_log (device_id)`,
+      `CREATE INDEX idx_audit_event ON audit_log (event)`,
+      `CREATE INDEX idx_cash_device ON cash_movement (device_id, closing_id)`,
+      `CREATE INDEX idx_delivery_order ON receipt_delivery (order_id)`,
+      // Die Bezeichnung eines geparkten Vorgangs muss je Kasse eindeutig sein,
+      // und zwar ohne Ruecksicht auf Gross- und Kleinschreibung: "Tisch 4" und
+      // "tisch 4" waeren in der Liste nicht auseinanderzuhalten.
+      `CREATE UNIQUE INDEX idx_parked_label ON parked_sale (device_id, label COLLATE NOCASE)`,
 
       // Unveraenderbarkeit bezahlter Belege, auf Datenbankebene.
       `CREATE TRIGGER trg_order_no_update
@@ -297,6 +403,40 @@ export const MIGRATIONS: readonly Migration[] = [
         BEFORE DELETE ON stock_movement
         BEGIN
           SELECT RAISE(ABORT, 'Eine Bestandsbewegung wird nicht geloescht');
+        END`,
+
+      // Das Pruefprotokoll ist nur anfuegbar. Ein Protokoll, das sich aendern
+      // laesst, beweist nichts - und genau dann wird es gebraucht, wenn
+      // jemand einen Grund haette, es zu aendern.
+      `CREATE TRIGGER trg_audit_no_update
+        BEFORE UPDATE ON audit_log
+        BEGIN
+          SELECT RAISE(ABORT, 'Das Pruefprotokoll wird nicht geaendert');
+        END`,
+
+      `CREATE TRIGGER trg_audit_no_delete
+        BEFORE DELETE ON audit_log
+        BEGIN
+          SELECT RAISE(ABORT, 'Das Pruefprotokoll wird nicht geloescht');
+        END`,
+
+      // Bargeldbewegungen sind unveraenderlich - mit einer Ausnahme: die
+      // Zuordnung zum Kassenabschluss wird nachgetragen, genau wie beim Beleg.
+      `CREATE TRIGGER trg_cash_no_update
+        BEFORE UPDATE ON cash_movement
+        FOR EACH ROW WHEN NEW.amount <> OLD.amount
+          OR NEW.type <> OLD.type
+          OR NEW.reason <> OLD.reason
+          OR NEW.user_id <> OLD.user_id
+          OR NEW.created_at <> OLD.created_at
+        BEGIN
+          SELECT RAISE(ABORT, 'Eine Kassenbewegung wird nicht geaendert - Korrektur nur als neue Bewegung');
+        END`,
+
+      `CREATE TRIGGER trg_cash_no_delete
+        BEFORE DELETE ON cash_movement
+        BEGIN
+          SELECT RAISE(ABORT, 'Eine Kassenbewegung wird nicht geloescht');
         END`,
 
       `CREATE TRIGGER trg_line_no_delete

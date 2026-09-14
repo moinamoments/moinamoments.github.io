@@ -55,6 +55,8 @@ export interface ReceiptView {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly serviceMode: string;
+  /** Name des Kunden, wenn er einen genannt hat; sonst `null`. */
+  readonly customerName: string | null;
   readonly lines: readonly ReceiptLineView[];
   readonly total: string;
   readonly taxGroups: readonly TaxGroupTotal[];
@@ -181,6 +183,7 @@ export function buildReceiptView(order: Order, context: ReceiptContext): Receipt
     startedAt: formatGermanDateTime(order.startedAt),
     finishedAt: formatGermanDateTime(order.paidAt ?? order.startedAt),
     serviceMode: order.serviceMode === "DINE_IN" ? "Verzehr vor Ort" : "Ausser Haus",
+    customerName: order.customerName ?? null,
     lines,
     total: formatAmount(order.total),
     taxGroups,
@@ -279,6 +282,9 @@ export function renderReceiptText(view: ReceiptView, width = 42): string {
   out.push("");
   out.push(row(`Beleg ${view.receiptNumber}`, view.serviceMode));
   out.push(view.issuedAt);
+  // Der Kundenname steht oben, nicht unten: wer den Bon fuer die Buchhaltung
+  // mitnimmt, sucht ihn im Kopf.
+  if (view.customerName) out.push(...wrapLabelValue(`Kunde: ${view.customerName}`));
   out.push(rule);
 
   for (const line of view.lines) {

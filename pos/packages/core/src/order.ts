@@ -155,7 +155,12 @@ export async function finishTransaction(
   open: OpenTransaction,
   cart: Cart,
   payments: readonly PaymentIntent[],
-  options: { readonly sequence: number; readonly note?: string | null } & CartOptions,
+  options: {
+    readonly sequence: number;
+    readonly note?: string | null;
+    /** Kundenname, falls der Kunde einen genannt hat. */
+    readonly customerName?: string | null;
+  } & CartOptions,
 ): Promise<FinishTransactionResult> {
   if (cart.tenantId !== context.tenant.id) {
     throw new OrderError("Warenkorb gehoert zu einem anderen Mandanten");
@@ -212,6 +217,7 @@ export async function finishTransaction(
     paidAt,
     tse,
     closingId: null,
+    customerName: options.customerName ?? null,
     note: options.note ?? null,
   };
 

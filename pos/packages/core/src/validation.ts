@@ -274,7 +274,12 @@ export function checkEmail(input: string, options: { readonly required?: boolean
   if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(value)) {
     return rejected("Die E-Mail-Adresse ist nicht lesbar. Beispiel: name@beispiel.de");
   }
-  return accepted(value);
+  // Nur die Domain wird kleingeschrieben: Rechnernamen sind unabhaengig von
+  // Gross- und Kleinschreibung, der Teil vor dem @ nach RFC 5321 nicht. Wer
+  // beides kleinschreibt, riskiert eine Adresse, die nicht mehr zustellbar
+  // ist - und das faellt erst auf, wenn der Kunde seinen Beleg nicht bekommt.
+  const at = value.lastIndexOf("@");
+  return accepted(`${value.slice(0, at)}@${value.slice(at + 1).toLowerCase()}`);
 }
 
 /**

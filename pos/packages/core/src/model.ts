@@ -421,6 +421,16 @@ export interface Order {
   voidsOrderId?: Id | null;
   /** Id des Kassenabschlusses, in dem dieser Beleg enthalten ist. */
   closingId?: Id | null;
+  /**
+   * Name des Kunden, wenn er einen genannt hat.
+   *
+   * Freiwillig und bewusst das einzige Kundenfeld am Beleg: eine Kasse braucht
+   * fuer einen Bon unter 250 EUR keine Adresse (§ 33 UStDV), und was nicht
+   * erhoben wird, kann nicht abfliessen. Fuer eine Rechnung darueber kommen
+   * Name und Adresse aus `CustomerAddress` dazu - die gehoert zum Versand,
+   * nicht zum Beleg.
+   */
+  customerName?: string | null;
   note?: string | null;
 }
 

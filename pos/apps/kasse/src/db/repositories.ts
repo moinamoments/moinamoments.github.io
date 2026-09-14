@@ -29,6 +29,16 @@ import {
   type ProductImage,
   type StockMovement,
   type StockMovementReason,
+  type AuditEntry,
+  type AuditEvent,
+  type CashMovement,
+  type CashMovementType,
+  type DeliveryChannel,
+  type DeliveryRecord,
+  type LoginAttemptState,
+  type ParkedSale,
+  type Cart,
+  NO_ATTEMPTS,
 } from "@kp/core";
 import type { Db, SqlValue } from "./database.ts";
 
@@ -136,23 +146,277 @@ export async function saveDevice(db: Db, device: Device): Promise<void> {
   );
 }
 
-interface UserRow { id: string; tenant_id: string; name: string; role: string; pin_hash: string | null; active: number }
+interface UserRow {
+  id: string; tenant_id: string; name: string; role: string; permission_overrides: string;
+  pin_hash: string | null; pin_set_at: string | null; active: number;
+}
 
-export async function listUsers(db: Db): Promise<User[]> {
-  const rows = await db.all<UserRow>("SELECT * FROM app_user WHERE active = 1 ORDER BY name");
+/**
+ * Rechteabweichungen aus der JSON-Spalte lesen.
+ *
+ * Fehlerhaftes JSON darf keinen Bediener aussperren und ihm auch keine Rechte
+ * geben, die er nicht hat: im Zweifel gilt die Rolle allein. Das ist die
+ * sichere Richtung - eine Abweichung erteilt Rechte oder nimmt sie, und beides
+ * darf nicht aus einem Lesefehler entstehen.
+ */
+function toOverrides(json: string): Record<string, boolean> | null {
+  if (!json || json === "{}") return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const result: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "boolean") result[key] = value;
+    }
+    return Object.keys(result).length === 0 ? null : result;
+  } catch {
+    return null;
+  }
+}
+
+function toUser(row: UserRow): User {
+  return {
+    id: row.id, tenantId: row.tenant_id, name: row.name, role: row.role as User["role"],
+    permissionOverrides: toOverrides(row.permission_overrides), pinHash: row.pin_hash,
+    active: bool(row.active),
+  };
+}
+
+/** Alle Bediener - standardmaessig nur die aktiven. */
+export async function listUsers(db: Db, includeInactive = false): Promise<User[]> {
+  const rows = await db.all<UserRow>(
+    `SELECT * FROM app_user ${includeInactive ? "" : "WHERE active = 1"} ORDER BY name`,
+  );
+  return rows.map(toUser);
+}
+
+export async function getUser(db: Db, userId: Id): Promise<User | null> {
+  const row = await db.first<UserRow>("SELECT * FROM app_user WHERE id = ?", [userId]);
+  return row ? toUser(row) : null;
+}
+
+export async function saveUser(db: Db, user: User, options: { readonly pinSetAt?: string } = {}): Promise<void> {
+  await db.run(
+    `INSERT INTO app_user (id, tenant_id, name, role, permission_overrides, pin_hash, pin_set_at, active)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role,
+        permission_overrides = excluded.permission_overrides,
+        pin_hash = excluded.pin_hash, active = excluded.active,
+        -- Der Zeitpunkt der PIN-Vergabe wird nur beim Setzen einer PIN
+        -- ueberschrieben. Ein Formular, das nur den Namen aendert, darf ihn
+        -- nicht auf "heute" ziehen.
+        pin_set_at = CASE WHEN excluded.pin_set_at IS NULL THEN app_user.pin_set_at ELSE excluded.pin_set_at END`,
+    [user.id, user.tenantId, user.name, user.role,
+      JSON.stringify(user.permissionOverrides ?? {}), user.pinHash ?? null,
+      options.pinSetAt ?? null, flag(user.active)],
+  );
+}
+
+// --- Anmeldeversuche ------------------------------------------------------
+
+/**
+ * Fehlversuche eines Bedieners an diesem Geraet.
+ *
+ * Kein Datensatz bedeutet: noch kein Fehlversuch. Das ist der Normalfall und
+ * darf deshalb keinen Fehler ergeben.
+ */
+export async function getLoginAttempts(db: Db, userId: Id, deviceId: Id): Promise<LoginAttemptState> {
+  const row = await db.first<{ failed_attempts: number; lock_count: number; locked_until: string | null }>(
+    "SELECT failed_attempts, lock_count, locked_until FROM login_attempt WHERE user_id = ? AND device_id = ?",
+    [userId, deviceId],
+  );
+  if (!row) return NO_ATTEMPTS;
+  return { failedAttempts: row.failed_attempts, lockCount: row.lock_count, lockedUntil: row.locked_until };
+}
+
+export async function saveLoginAttempts(
+  db: Db,
+  userId: Id,
+  deviceId: Id,
+  state: LoginAttemptState,
+  now: string,
+): Promise<void> {
+  await db.run(
+    `INSERT INTO login_attempt (user_id, device_id, failed_attempts, lock_count, locked_until, last_attempt_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(user_id, device_id) DO UPDATE SET failed_attempts = excluded.failed_attempts,
+        lock_count = excluded.lock_count, locked_until = excluded.locked_until,
+        last_attempt_at = excluded.last_attempt_at`,
+    [userId, deviceId, state.failedAttempts, state.lockCount, state.lockedUntil ?? null, now],
+  );
+}
+
+// --- Pruefprotokoll -------------------------------------------------------
+
+/**
+ * Protokolleintrag schreiben.
+ *
+ * Der Eintrag wird mit `buildAuditEntry` gebildet - dort wird geprueft, dass
+ * kein Geheimnis darin steht. Diese Funktion nimmt nur den fertigen Eintrag,
+ * damit die Pruefung nicht umgangen werden kann.
+ */
+export async function appendAudit(db: Db, entry: AuditEntry): Promise<void> {
+  await db.run(
+    `INSERT INTO audit_log (id, tenant_id, device_id, user_id, user_name, event, subject, detail, amount, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [entry.id, entry.tenantId, entry.deviceId, entry.userId, entry.userName, entry.event,
+      entry.subject, entry.detail, entry.amount, entry.createdAt],
+  );
+}
+
+interface AuditRow {
+  id: string; tenant_id: string; device_id: string; user_id: string | null; user_name: string | null;
+  event: string; subject: string | null; detail: string | null; amount: number | null; created_at: string;
+}
+
+/**
+ * Protokoll lesen, neueste zuerst.
+ *
+ * Sortiert nach `rowid` und nicht nach dem Zeitstempel - derselbe Grund wie
+ * bei den Bestandsbewegungen: Zeitstempel mit Offset sortieren als Text nicht
+ * chronologisch.
+ */
+export async function listAudit(
+  db: Db,
+  options: { readonly events?: readonly AuditEvent[]; readonly limit?: number } = {},
+): Promise<AuditEntry[]> {
+  const limit = options.limit ?? 200;
+  const events = options.events ?? [];
+  const rows = events.length > 0
+    ? await db.all<AuditRow>(
+        `SELECT * FROM audit_log WHERE event IN (${events.map(() => "?").join(",")})
+         ORDER BY rowid DESC LIMIT ?`,
+        [...events, limit],
+      )
+    : await db.all<AuditRow>("SELECT * FROM audit_log ORDER BY rowid DESC LIMIT ?", [limit]);
+
   return rows.map((row) => ({
-    id: row.id, tenantId: row.tenant_id, name: row.name,
-    role: row.role as User["role"], pinHash: row.pin_hash, active: bool(row.active),
+    id: row.id, tenantId: row.tenant_id, deviceId: row.device_id, userId: row.user_id,
+    userName: row.user_name, event: row.event as AuditEvent, subject: row.subject,
+    detail: row.detail, amount: row.amount, createdAt: row.created_at,
   }));
 }
 
-export async function saveUser(db: Db, user: User): Promise<void> {
-  await db.run(
-    `INSERT INTO app_user (id, tenant_id, name, role, pin_hash, active) VALUES (?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role,
-        pin_hash = excluded.pin_hash, active = excluded.active`,
-    [user.id, user.tenantId, user.name, user.role, user.pinHash ?? null, flag(user.active)],
+// --- Geparkte Vorgaenge ---------------------------------------------------
+
+interface ParkedRow {
+  id: string; tenant_id: string; store_id: string; device_id: string; user_id: string;
+  label: string; cart_json: string; started_at: string; parked_at: string;
+  tse_transaction_number: number | null; tse_failure: string | null; total: number; line_count: number;
+}
+
+export async function listParkedSales(db: Db, deviceId: Id): Promise<ParkedSale[]> {
+  const rows = await db.all<ParkedRow>(
+    "SELECT * FROM parked_sale WHERE device_id = ? ORDER BY rowid",
+    [deviceId],
   );
+  return rows.map((row) => ({
+    id: row.id, tenantId: row.tenant_id, storeId: row.store_id, deviceId: row.device_id,
+    userId: row.user_id, label: row.label, cart: JSON.parse(row.cart_json) as Cart,
+    startedAt: row.started_at, parkedAt: row.parked_at,
+    tseTransactionNumber: row.tse_transaction_number, tseFailure: row.tse_failure,
+    total: row.total, lineCount: row.line_count,
+  }));
+}
+
+export async function saveParkedSale(db: Db, sale: ParkedSale): Promise<void> {
+  await db.run(
+    `INSERT INTO parked_sale (id, tenant_id, store_id, device_id, user_id, label, cart_json,
+        started_at, parked_at, tse_transaction_number, tse_failure, total, line_count)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET label = excluded.label, cart_json = excluded.cart_json,
+        parked_at = excluded.parked_at, total = excluded.total, line_count = excluded.line_count,
+        tse_failure = excluded.tse_failure`,
+    [sale.id, sale.tenantId, sale.storeId, sale.deviceId, sale.userId, sale.label,
+      JSON.stringify(sale.cart), sale.startedAt, sale.parkedAt, sale.tseTransactionNumber,
+      sale.tseFailure, sale.total, sale.lineCount],
+  );
+}
+
+/**
+ * Geparkten Vorgang entfernen.
+ *
+ * Anders als ein Beleg darf ein geparkter Vorgang geloescht werden: er ist
+ * noch kein Geschaeftsvorfall, sondern eine Erfassung. Beim Fortsetzen
+ * verschwindet er aus der Liste und wird zum Beleg; beim Verwerfen bleibt die
+ * begonnene TSE-Transaktion offen und dort protokolliert - genau so ist es
+ * vorgesehen.
+ */
+export async function deleteParkedSale(db: Db, id: Id): Promise<void> {
+  await db.run("DELETE FROM parked_sale WHERE id = ?", [id]);
+}
+
+// --- Kassenbuch -----------------------------------------------------------
+
+interface CashRow {
+  id: string; tenant_id: string; store_id: string; device_id: string; type: string;
+  amount: number; reason: string; cash_count_json: string; user_id: string;
+  closing_id: string | null; created_at: string;
+}
+
+function toCashMovement(row: CashRow): CashMovement {
+  const counted = JSON.parse(row.cash_count_json) as CashCountEntry[];
+  return {
+    id: row.id, tenantId: row.tenant_id, storeId: row.store_id, deviceId: row.device_id,
+    type: row.type as CashMovementType, amount: row.amount, reason: row.reason,
+    ...(counted.length > 0 ? { cashCount: counted } : {}),
+    userId: row.user_id, createdAt: row.created_at,
+  };
+}
+
+export async function appendCashMovement(db: Db, movement: CashMovement): Promise<void> {
+  await db.run(
+    `INSERT INTO cash_movement (id, tenant_id, store_id, device_id, type, amount, reason,
+        cash_count_json, user_id, closing_id, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,NULL,?)`,
+    [movement.id, movement.tenantId, movement.storeId, movement.deviceId, movement.type,
+      movement.amount, movement.reason, JSON.stringify(movement.cashCount ?? []),
+      movement.userId, movement.createdAt],
+  );
+}
+
+/** Bewegungen, die noch zu keinem Abschluss gehoeren - die laufende Schicht. */
+export async function listOpenCashMovements(db: Db, deviceId: Id): Promise<CashMovement[]> {
+  const rows = await db.all<CashRow>(
+    "SELECT * FROM cash_movement WHERE device_id = ? AND closing_id IS NULL ORDER BY rowid",
+    [deviceId],
+  );
+  return rows.map(toCashMovement);
+}
+
+export async function listCashMovements(db: Db, deviceId: Id, limit = 200): Promise<CashMovement[]> {
+  const rows = await db.all<CashRow>(
+    "SELECT * FROM cash_movement WHERE device_id = ? ORDER BY rowid DESC LIMIT ?",
+    [deviceId, limit],
+  );
+  return rows.map(toCashMovement);
+}
+
+// --- Belegausgabe ---------------------------------------------------------
+
+export async function appendDelivery(
+  db: Db,
+  id: Id,
+  tenantId: Id,
+  record: DeliveryRecord,
+): Promise<void> {
+  await db.run(
+    `INSERT INTO receipt_delivery (id, tenant_id, order_id, channel, recipient, sent_at, via, ok, error)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, tenantId, record.orderId, record.channel, record.recipient, record.sentAt,
+      record.via, flag(record.ok), record.error ?? null],
+  );
+}
+
+export async function listDeliveries(db: Db, orderId: Id): Promise<DeliveryRecord[]> {
+  const rows = await db.all<{
+    order_id: string; channel: string; recipient: string; sent_at: string; via: string;
+    ok: number; error: string | null;
+  }>("SELECT * FROM receipt_delivery WHERE order_id = ? ORDER BY rowid", [orderId]);
+  return rows.map((row) => ({
+    orderId: row.order_id, channel: row.channel as DeliveryChannel, recipient: row.recipient,
+    sentAt: row.sent_at, via: row.via as DeliveryRecord["via"], ok: bool(row.ok), error: row.error,
+  }));
 }
 
 // --- Artikelstamm --------------------------------------------------------
@@ -368,12 +632,14 @@ export async function saveOrder(db: Db, order: Order): Promise<void> {
   await db.transaction(async () => {
     await db.run(
       `INSERT INTO sales_order (id, tenant_id, store_id, device_id, user_id, receipt_number, state,
-          service_mode, total, order_discount, started_at, paid_at, voids_order_id, closing_id, note, tse_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          service_mode, total, order_discount, started_at, paid_at, voids_order_id, closing_id,
+          customer_name, note, tse_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         order.id, order.tenantId, order.storeId, order.deviceId, order.userId, order.receiptNumber,
         order.state, order.serviceMode, order.total, order.orderDiscount, order.startedAt,
-        order.paidAt ?? null, order.voidsOrderId ?? null, order.closingId ?? null, order.note ?? null,
+        order.paidAt ?? null, order.voidsOrderId ?? null, order.closingId ?? null,
+        order.customerName ?? null, order.note ?? null,
         order.tse ? JSON.stringify(order.tse) : null,
       ],
     );
@@ -411,7 +677,7 @@ interface OrderRow {
   id: string; tenant_id: string; store_id: string; device_id: string; user_id: string;
   receipt_number: string; state: string; service_mode: string; total: number; order_discount: number;
   started_at: string; paid_at: string | null; voids_order_id: string | null; closing_id: string | null;
-  note: string | null; tse_json: string | null;
+  customer_name: string | null; note: string | null; tse_json: string | null;
 }
 
 async function hydrateOrders(db: Db, rows: readonly OrderRow[]): Promise<Order[]> {
@@ -461,7 +727,7 @@ async function hydrateOrders(db: Db, rows: readonly OrderRow[]): Promise<Order[]
     serviceMode: row.service_mode as ServiceMode, lines: linesByOrder.get(row.id) ?? [],
     payments: paymentsByOrder.get(row.id) ?? [], total: row.total, orderDiscount: row.order_discount,
     startedAt: row.started_at, paidAt: row.paid_at, voidsOrderId: row.voids_order_id,
-    closingId: row.closing_id, note: row.note,
+    closingId: row.closing_id, customerName: row.customer_name, note: row.note,
     tse: row.tse_json ? (JSON.parse(row.tse_json) as TseTransactionRecord) : null,
   }));
 }
@@ -512,6 +778,13 @@ export async function saveClosing(
     for (const orderId of closing.orderIds) {
       await db.run("UPDATE sales_order SET closing_id = ? WHERE id = ?", [closing.id, orderId]);
     }
+    // Dasselbe fuer die Bargeldbewegungen der Schicht: sie gehoeren in die
+    // Zaehlung dieses Abschlusses und duerfen im naechsten nicht wieder
+    // auftauchen.
+    await db.run(
+      "UPDATE cash_movement SET closing_id = ? WHERE device_id = ? AND closing_id IS NULL",
+      [closing.id, closing.deviceId],
+    );
   });
 }
 

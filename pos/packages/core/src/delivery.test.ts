@@ -98,7 +98,7 @@ test("E-Mail-Versand: Adresse wird geprueft, bevor etwas geoeffnet wird", async 
 
   const message = prepareEmail(tenant, view, { name: "Frau Mueller", email: " Frau.Mueller@Beispiel.de " });
   assert.equal(message.channel, "EMAIL");
-  assert.equal(message.to, "Frau.Mueller@Beispiel.de");
+  assert.equal(message.to, "Frau.Mueller@beispiel.de", "die Domain kleingeschrieben, das Postfach nicht");
   assert.ok(message.url.startsWith("mailto:"));
   assert.ok(message.url.includes("subject="));
   assert.ok(message.url.includes("body="));
