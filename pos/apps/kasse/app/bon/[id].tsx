@@ -114,6 +114,8 @@ export default function BonScreen() {
           <Row left={`Beleg ${view.receiptNumber}`} right={view.serviceMode} />
           <Row left="Ausgestellt" right={view.issuedAt} />
           {view.customerName ? <Row left="Kunde" right={view.customerName} /> : null}
+          {/* Bei einem Storno steht hier, welcher Beleg berichtigt wird. */}
+          {view.note ? <Text style={styles.noteLine}>{view.note}</Text> : null}
           <View style={styles.divider} />
 
           {view.lines.map((line, index) => (
@@ -406,6 +408,7 @@ const styles = StyleSheet.create({
   bold: { fontSize: font.label, fontWeight: "800" },
   lineDeposit: { paddingLeft: space.md },
   note: { color: colors.textMuted, fontSize: font.small, paddingLeft: space.md },
+  noteLine: { color: colors.text, fontSize: font.small, fontWeight: "600" },
   tseLine: { color: colors.textMuted, fontSize: font.small },
   footerLine: { color: colors.text, fontSize: font.small, marginTop: space.sm },
   qr: { alignItems: "center", gap: space.sm, marginVertical: space.md },

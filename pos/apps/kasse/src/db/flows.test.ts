@@ -1425,3 +1425,184 @@ test("eine unbrauchbare Adresse oeffnet keine Mail-App", async () => {
     base.db.close();
   }
 });
+
+// --- Ein ganzer Tag -------------------------------------------------------
+
+test("ein vollstaendiger Verkaufstag von der Anmeldung bis zum Abschluss", async () => {
+  // Dieser Test geht genau die Folge, die die Bildschirme gehen - Anmeldung,
+  // Tageseroeffnung, Verkauf, Parken, Fortsetzen, Pfandrueckgabe, Teilstorno,
+  // Entnahme, Abschluss. Er ist absichtlich lang: die Fehler, die Geld kosten,
+  // entstehen nicht in einer Funktion, sondern zwischen zweien.
+  const base = await setup();
+  try {
+    const ctx = context(base);
+    const products = await listProducts(base.db);
+    const deposits = createDepositCatalog(products);
+    const kaffee = find(products, "Kaffee");
+    const limo = find(products, "Limonade 0,5 l");
+    const becher = find(products, "Becher");
+
+    // 1. Anmeldung mit PIN.
+    await saveUser(base.db, { ...base.user, pinHash: hashPin("4711", { iterations: 1000 }) }, { pinSetAt: NOW });
+    const user = (await getUser(base.db, base.user.id))!;
+    const login = attemptLogin(user, "4711", await getLoginAttempts(base.db, user.id, base.device.id), NOW);
+    assert.equal(login.result, "OK");
+    await saveLoginAttempts(base.db, user.id, base.device.id, login.state, NOW);
+    await appendAudit(base.db, buildAuditEntry({
+      id: newId(), tenantId: base.tenant.id, deviceId: base.device.id,
+      userId: user.id, userName: user.name, event: "LOGIN_OK", createdAt: NOW,
+    }));
+
+    // 2. Tageseroeffnung: 100 EUR Wechselgeld.
+    const opening = openDay({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      cashCount: [{ denomination: 2000, count: 4 }, { denomination: 1000, count: 2 }],
+      userId: user.id, createdAt: NOW,
+    });
+    await appendCashMovement(base.db, opening);
+    assert.equal(opening.amount, 10_000);
+
+    // 3. Wareneingang: 24 Flaschen Limonade.
+    const receipt = buildMovement({
+      id: newId(), product: limo, storeId: base.store.id, userId: user.id,
+      quantity: 24 * ONE, reason: "PURCHASE", note: "Lieferung Metro", createdAt: NOW,
+    });
+    await applyStockMovement(base.db, receipt.movement);
+    assert.equal(receipt.stock, 24 * ONE);
+
+    // 4. Erster Verkauf: zwei Kaffee mit Pfand, bar mit Rueckgeld.
+    const first = await sell(
+      base, ctx,
+      (cart) => addProduct(cart, kaffee, { id: newId(), quantity: 2 * ONE }),
+      { method: "CASH", tendered: 1000 },
+    );
+    // 2 x 2,50 + 2 x (1,00 Becher + 0,30 Deckel) = 7,60
+    assert.equal(first.total, 760);
+    assert.equal(first.payments[0]?.change, 240);
+    assert.ok(isTseSecured(first));
+
+    // 5. Zweiter Kunde will noch etwas holen - Vorgang parken.
+    const open = await beginTransaction(ctx);
+    const parkedCart = addProduct(emptyCart(base.tenant.id, "TAKEAWAY"), limo, { id: newId(), quantity: 3 * ONE });
+    const parkedTotal = cartTotals(parkedCart, { deposits }).total;
+    const parked = await parkSale({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      userId: user.id, label: "Herr mit Hund", cart: parkedCart, open, parkedAt: NOW,
+      total: parkedTotal, existing: [], tse: ctx.tse, tseClientId: base.device.tseClientId,
+    });
+    await saveParkedSale(base.db, parked);
+
+    // 6. Dritter Kunde bezahlt dazwischen - mit Pfandrueckgabe.
+    const third = await sell(
+      base, ctx,
+      (cart) => addDepositReturn(addProduct(cart, kaffee, { id: newId() }), { productId: becher.id, name: becher.name, price: becher.price ?? 0, taxKey: becher.taxKey }, { id: newId(), quantity: 2 * ONE }),
+      { method: "CARD_DEBIT" },
+    );
+    // 2,50 + 1,00 Becher + 0,30 Deckel - 2 x 1,00 Rueckgabe = 1,80
+    assert.equal(third.total, 180);
+
+    // 7. Der geparkte Vorgang wird fortgesetzt und bezahlt.
+    const stored = (await listParkedSales(base.db, base.device.id))[0]!;
+    const resumed = resumeSale(stored);
+    const resumeSequence = await nextSequence(base.db, base.device.id, "receipt");
+    const { order: resumedOrder } = await finishTransaction(
+      ctx, resumed.open, resumed.cart,
+      [{ method: "CASH", amount: parkedTotal, tendered: parkedTotal }],
+      { sequence: resumeSequence, deposits, customerName: "Herr mit Hund" },
+    );
+    await saveOrder(base.db, resumedOrder);
+    await deleteParkedSale(base.db, stored.id);
+    for (const result of movementsForOrder(resumedOrder, products, { newId, userId: user.id })) {
+      await applyStockMovement(base.db, result.movement);
+    }
+    assert.equal(resumedOrder.startedAt, open.startedAt, "der Bon traegt den Beginn der Erfassung");
+    assert.equal(resumedOrder.customerName, "Herr mit Hund");
+    // 3 x 2,50 + 3 x 0,25 Flaschenpfand = 8,25
+    assert.equal(resumedOrder.total, 825);
+
+    // 8. Teilstorno: von den zwei Kaffee des ersten Belegs war einer falsch.
+    const kaffeeLine = first.lines.find((line) => line.productId === kaffee.id)!;
+    const voidCart = buildPartialVoidCart(first, [{ lineId: kaffeeLine.id, quantity: ONE }]);
+    const voidSequence = await nextSequence(base.db, base.device.id, "receipt");
+    const { order: partial } = await finishTransaction(
+      ctx, await beginTransaction(ctx), voidCart,
+      [{ method: "CASH", amount: cartTotals(voidCart, {}).total }],
+      { sequence: voidSequence, note: `Teilstorno zu ${first.receiptNumber}: falsch gebucht` },
+    );
+    await saveOrder(base.db, { ...partial, voidsOrderId: first.id });
+    await appendAudit(base.db, buildAuditEntry({
+      id: newId(), tenantId: base.tenant.id, deviceId: base.device.id, userId: user.id,
+      userName: user.name, event: "RECEIPT_VOIDED", subject: first.receiptNumber,
+      detail: "Teilstorno: falsch gebucht", amount: partial.total, createdAt: NOW,
+    }));
+    // Ein Kaffee mit Becher und Deckel zurueck: -3,80
+    assert.equal(partial.total, -380);
+
+    // 9. Entnahme fuer einen Einkauf.
+    const withdrawal = buildCashMovement({
+      id: newId(), tenantId: base.tenant.id, storeId: base.store.id, deviceId: base.device.id,
+      type: "WITHDRAWAL", amount: 2000, reason: "Einkauf Milch", userId: user.id, createdAt: NOW,
+    });
+    await appendCashMovement(base.db, withdrawal);
+
+    // 10. Bestand: 3 Flaschen verkauft, 24 geliefert.
+    const limoNow = (await listProducts(base.db)).find((item) => item.id === limo.id)!;
+    assert.equal(limoNow.stock, 21 * ONE);
+    assert.equal(stockState(limoNow), "OK");
+
+    // 11. Abschluss. Der Soll-Bestand muss aufgehen: Eroeffnung + Barumsatz
+    // + Bewegungen. Genau das ist die Zahl, die der Betrieb abends nachzaehlt.
+    const orders = await listOpenForClosing(base.db, base.device.id);
+    assert.equal(orders.length, 4, "vier Belege: drei Verkaeufe und ein Teilstorno");
+    const movements = await listOpenCashMovements(base.db, base.device.id);
+
+    const cashSales = orders
+      .flatMap((order) => order.payments)
+      .filter((payment) => payment.method === "CASH")
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    // 7,60 + 8,25 - 3,80 = 12,05 bar; die Kartenzahlung zaehlt nicht mit.
+    assert.equal(cashSales, 1205);
+
+    const report = buildClosing({
+      tenant: base.tenant, store: base.store, device: base.device, userId: user.id,
+      closingId: newId(), number: await nextSequence(base.db, base.device.id, "closing"),
+      from: first.startedAt, to: "2026-09-26T22:00:00+02:00", createdAt: "2026-09-26T22:00:05+02:00",
+      orders, cashMovements: movements,
+      // Gezaehlt wird, was rechnerisch da sein muss: 100 + 12,05 - 20 = 92,05
+      cashCount: [
+        { denomination: 5000, count: 1 }, { denomination: 2000, count: 2 },
+        { denomination: 200, count: 1 }, { denomination: 5, count: 1 },
+      ],
+    });
+    await saveClosing(base.db, report.closing, JSON.stringify(report));
+
+    assert.equal(report.closing.openingCash, 10_000);
+    assert.equal(report.expectedCash, 9205);
+    assert.equal(report.countedCash, 9205);
+    assert.equal(report.cashDifference, 0, `gezaehlt ${report.countedCash}, erwartet ${report.expectedCash}`);
+    assert.equal(report.unsecuredOrderCount, 0);
+    assert.equal(report.voidCount, 1);
+
+    // 12. Danach ist alles zugeordnet: keine offenen Belege, keine offenen
+    // Bewegungen, kein geparkter Vorgang.
+    assert.equal((await listOpenForClosing(base.db, base.device.id)).length, 0);
+    assert.equal((await listOpenCashMovements(base.db, base.device.id)).length, 0);
+    assert.equal((await listParkedSales(base.db, base.device.id)).length, 0);
+
+    // 13. Das Protokoll erzaehlt den Tag nach.
+    const audit = summarizeAudit(await listAudit(base.db));
+    assert.equal(audit.byEvent["LOGIN_OK"], 1);
+    assert.equal(audit.voidsByUser[0]?.count, 1);
+    assert.equal(audit.tseFailures, 0);
+
+    // 14. Der Bon des Teilstornos ist lesbar und passt auf schmales Papier.
+    const view = buildReceiptView((await getOrder(base.db, partial.id))!, {
+      tenant: base.tenant, store: base.store, device: base.device,
+    });
+    const text = renderReceiptText(view, 32);
+    for (const line of text.split("\n")) assert.ok(line.length <= 32, `zu lang: "${line}"`);
+    assert.ok(text.includes("Teilstorno"));
+  } finally {
+    base.db.close();
+  }
+});

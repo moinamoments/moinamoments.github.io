@@ -57,6 +57,16 @@ export interface ReceiptView {
   readonly serviceMode: string;
   /** Name des Kunden, wenn er einen genannt hat; sonst `null`. */
   readonly customerName: string | null;
+  /**
+   * Vermerk zum Beleg - bei einem Storno der Verweis auf den Beleg, den er
+   * berichtigt, samt Grund.
+   *
+   * Er gehoert auf den Bon: ein Stornobeleg, der nicht nennt, welchen Beleg er
+   * berichtigt, ist bei einer Kassennachschau nicht zuzuordnen. Die
+   * Belegnummer des Originals steht sonst nirgends auf dem Papier - `voidsOrderId`
+   * ist eine Datenbank-Id und hilft niemandem, der den Bon in der Hand haelt.
+   */
+  readonly note: string | null;
   readonly lines: readonly ReceiptLineView[];
   readonly total: string;
   readonly taxGroups: readonly TaxGroupTotal[];
@@ -184,6 +194,7 @@ export function buildReceiptView(order: Order, context: ReceiptContext): Receipt
     finishedAt: formatGermanDateTime(order.paidAt ?? order.startedAt),
     serviceMode: order.serviceMode === "DINE_IN" ? "Verzehr vor Ort" : "Ausser Haus",
     customerName: order.customerName ?? null,
+    note: order.note ?? null,
     lines,
     total: formatAmount(order.total),
     taxGroups,
@@ -285,6 +296,7 @@ export function renderReceiptText(view: ReceiptView, width = 42): string {
   // Der Kundenname steht oben, nicht unten: wer den Bon fuer die Buchhaltung
   // mitnimmt, sucht ihn im Kopf.
   if (view.customerName) out.push(...wrapLabelValue(`Kunde: ${view.customerName}`));
+  if (view.note) out.push(...wrap(view.note));
   out.push(rule);
 
   for (const line of view.lines) {
