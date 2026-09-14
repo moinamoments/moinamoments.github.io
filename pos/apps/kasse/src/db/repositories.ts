@@ -11,6 +11,7 @@ import {
   type CashCountEntry,
   type Category,
   type Closing,
+  type ClosingReport,
   type Device,
   type Id,
   type Order,
@@ -40,9 +41,11 @@ import {
   type Cart,
   type PrinterConfig,
   type TerminalConfig,
+  type AccountMapping,
   DEFAULT_PRINTER_CONFIG,
   DEFAULT_TERMINAL_CONFIG,
   NO_ATTEMPTS,
+  SKR03_PROPOSAL,
 } from "@kp/core";
 import type { Db, SqlValue } from "./database.ts";
 
@@ -100,6 +103,72 @@ export async function saveTenant(db: Db, tenant: Tenant): Promise<void> {
     ],
   );
 }
+
+// --- Buchhaltung ----------------------------------------------------------
+
+/**
+ * Einstellungen fuer den Buchungsstapel.
+ *
+ * `mapping` ist die Kontenzuordnung, die Zahlen daneben sind die Kopfangaben der
+ * DATEV-Datei. Sie sind absichtlich `null`, solange sie nicht eingetragen sind -
+ * eine Voreinstellung waere hier gefaehrlich: eine erfundene Mandantennummer
+ * bucht in die Buchhaltung eines anderen Betriebs.
+ */
+export interface AccountingSettings {
+  readonly mapping: AccountMapping;
+  readonly consultantNumber: number | null;
+  readonly clientNumber: number | null;
+  readonly fiscalYearStart: string | null;
+  readonly initials: string | null;
+}
+
+export async function getAccountingSettings(db: Db, tenantId: Id): Promise<AccountingSettings> {
+  const row = await db.first<{
+    mapping_json: string; consultant_number: number | null; client_number: number | null;
+    fiscal_year_start: string | null; initials: string | null;
+  }>("SELECT * FROM accounting WHERE tenant_id = ?", [tenantId]);
+
+  if (!row) {
+    // Noch nicht eingerichtet: der SKR03-Vorschlag als Ausgangspunkt. Er ist
+    // als unbestaetigt gekennzeichnet, und die Oberflaeche sagt das auch.
+    return { mapping: SKR03_PROPOSAL, consultantNumber: null, clientNumber: null, fiscalYearStart: null, initials: null };
+  }
+
+  let mapping: AccountMapping = SKR03_PROPOSAL;
+  try {
+    const parsed = JSON.parse(row.mapping_json) as unknown;
+    // Nur uebernehmen, was wie eine Zuordnung aussieht. Beschaedigtes JSON
+    // ergibt den Vorschlag - und der ist als unbestaetigt gekennzeichnet, also
+    // faellt es auf.
+    if (parsed && typeof parsed === "object" && "revenue" in parsed && "clearing" in parsed) {
+      mapping = { ...SKR03_PROPOSAL, ...(parsed as AccountMapping) };
+    }
+  } catch {
+    mapping = SKR03_PROPOSAL;
+  }
+
+  return {
+    mapping,
+    consultantNumber: row.consultant_number,
+    clientNumber: row.client_number,
+    fiscalYearStart: row.fiscal_year_start,
+    initials: row.initials,
+  };
+}
+
+export async function saveAccountingSettings(db: Db, tenantId: Id, settings: AccountingSettings): Promise<void> {
+  await db.run(
+    `INSERT INTO accounting (tenant_id, mapping_json, consultant_number, client_number, fiscal_year_start, initials)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(tenant_id) DO UPDATE SET mapping_json = excluded.mapping_json,
+        consultant_number = excluded.consultant_number, client_number = excluded.client_number,
+        fiscal_year_start = excluded.fiscal_year_start, initials = excluded.initials`,
+    [tenantId, JSON.stringify(settings.mapping), settings.consultantNumber, settings.clientNumber,
+      settings.fiscalYearStart, settings.initials],
+  );
+}
+
+// --- Betriebsstaette ------------------------------------------------------
 
 interface StoreRow {
   id: string; tenant_id: string; name: string; street: string | null; postal_code: string | null;
@@ -892,6 +961,52 @@ export async function listClosings(db: Db, deviceId: Id, limit = 30): Promise<{ 
     },
     reportJson: row.report_json,
   }));
+}
+
+/**
+ * Abschluesse eines Zeitraums mit ihren Belegen - fuer den Buchungsstapel.
+ *
+ * Der gespeicherte Bericht wird gelesen statt neu gerechnet: er ist der Stand,
+ * mit dem der Abschluss erstellt wurde, und genau der gehoert in die
+ * Buchhaltung. Ihn neu zu rechnen koennte eine andere Zahl ergeben, sobald sich
+ * eine Berechnung im Kern aendert - und dann stimmte der Stapel nicht mehr mit
+ * dem Z-Bericht ueberein, den der Betrieb ausgedruckt hat.
+ *
+ * Der Zeitraum vergleicht `created_at` als Text. Das ist hier zulaessig, weil
+ * verglichen wird, nicht sortiert: `>= "2026-09-01"` trifft jeden Zeitstempel
+ * dieses Tages unabhaengig vom Offset.
+ */
+export async function listClosingsForPeriod(
+  db: Db,
+  deviceId: Id,
+  from: string,
+  to: string,
+): Promise<{ report: ClosingReport; orders: Order[] }[]> {
+  const rows = await db.all<{ id: string; report_json: string }>(
+    `SELECT id, report_json FROM closing
+     WHERE device_id = ? AND created_at >= ? AND created_at <= ?
+     ORDER BY number`,
+    [deviceId, from, `${to}T23:59:59+14:00`],
+  );
+
+  const result: { report: ClosingReport; orders: Order[] }[] = [];
+  for (const row of rows) {
+    let report: ClosingReport;
+    try {
+      report = JSON.parse(row.report_json) as ClosingReport;
+    } catch {
+      // Ein unlesbarer Bericht darf den ganzen Export nicht verhindern - die
+      // uebrigen Abschluesse sind brauchbar. Er faellt auf, weil die Zahl der
+      // Abschluesse dann nicht stimmt.
+      continue;
+    }
+    const orderRows = await db.all<OrderRow>(
+      "SELECT * FROM sales_order WHERE closing_id = ? ORDER BY receipt_number",
+      [row.id],
+    );
+    result.push({ report, orders: await hydrateOrders(db, orderRows) });
+  }
+  return result;
 }
 
 /** Bargeldbestand zum Start: Endbestand des letzten Abschlusses. */

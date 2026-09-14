@@ -39,4 +39,8 @@ export * from "./tse/types.ts";
 export { MockTse, type MockTseOptions } from "./tse/mock.ts";
 export { FiskalyTse, type FiskalyConfig, type FetchLike, mapTransaction } from "./tse/fiskaly.ts";
 export * from "./dsfinvk/export.ts";
+export * from "./accounting/accounts.ts";
+export * from "./accounting/bookings.ts";
+export * from "./accounting/datev.ts";
+export * from "./accounting/lexware.ts";
 export * from "./sync/outbox.ts";

@@ -54,6 +54,24 @@ export const MIGRATIONS: readonly Migration[] = [
         created_at TEXT NOT NULL
       )`,
 
+      // Kontenzuordnung und Kopfangaben fuer die Buchhaltung, je Mandant.
+      // Als eigene Tabelle und nicht als Spalten am Mandanten: es sind viele
+      // Felder, sie aendern sich unabhaengig von den Betriebsdaten, und sie
+      // gehoeren nicht auf den Bon.
+      `CREATE TABLE accounting (
+        tenant_id TEXT PRIMARY KEY REFERENCES tenant(id),
+        -- Die Zuordnung als JSON: die Struktur kommt aus dem Kern
+        -- (AccountMapping), und eine Tabelle mit einer Spalte je Steuersatz
+        -- braeuchte bei jedem neuen Satz eine Migration.
+        mapping_json TEXT NOT NULL,
+        -- Beraternummer und Mandantennummer beim Steuerberater. Ohne sie nimmt
+        -- DATEV den Stapel nicht an, und raten kann man sie nicht.
+        consultant_number INTEGER,
+        client_number INTEGER,
+        fiscal_year_start TEXT,
+        initials TEXT
+      )`,
+
       `CREATE TABLE store (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL REFERENCES tenant(id),

@@ -90,6 +90,12 @@ export default function EinstellungenScreen() {
         allowed: kasse.can("EXPORT_DATA") || kasse.can("MANAGE_PRODUCTS"),
       },
       {
+        title: "Buchhaltung",
+        subtitle: "Buchungsstapel fuer DATEV und Lexware, Kontenzuordnung",
+        route: "/buchhaltung",
+        allowed: kasse.can("EXPORT_DATA"),
+      },
+      {
         title: "Pruefprotokoll",
         subtitle: "Wer hat was am System getan - Storni, Entnahmen, Rechte",
         route: "/protokoll",

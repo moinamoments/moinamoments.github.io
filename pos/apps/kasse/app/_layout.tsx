@@ -126,6 +126,7 @@ function AppTabs() {
       <Tabs.Screen name="kassen" options={{ href: null, title: "Kassen" }} />
       <Tabs.Screen name="protokoll" options={{ href: null, title: "Pruefprotokoll" }} />
       <Tabs.Screen name="sicherung" options={{ href: null, title: "Artikel sichern" }} />
+      <Tabs.Screen name="buchhaltung" options={{ href: null, title: "Buchhaltung" }} />
     </Tabs>
   );
 }
