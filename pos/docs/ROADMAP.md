@@ -101,24 +101,33 @@ je Mandant einstellbar — mit den Vorschlägen des jeweiligen Kontenrahmens, ab
 ohne sie fest zu verdrahten. Ein falsch gebuchter Erlöskonto-Schlüssel ist ein
 Fehler, den der Steuerberater ausbügeln muss.
 
-### 2.2 Wareneingang aus der Lieferantenrechnung
+### 2.2 Wareneingang aus der Lieferantenrechnung — **erledigt**
 
 **Warum gefragt:** „wenn bei Metro etwas für den Betrieb eingekauft wird, soll
 es automatisch eingebucht werden."
 
-**Was sinnvoll ist:** ZUGFeRD und XRechnung — beides strukturierte
-Rechnungsformate, die Großhändler zunehmend liefern. Daraus lassen sich Positionen
-und Mengen zuverlässig lesen. Dazu CSV-Import für Lieferanten, die kein
-strukturiertes Format haben, und Barcode-Unterstützung: Artikel scannen, Menge
-eintippen.
+**Fertig:** Bildschirm „Wareneingang" (über Verwaltung). Gelesen werden
+**ZUGFeRD** und **Factur-X** (das XML steckt gepackt in der PDF, sie wird
+geöffnet), **XRechnung** in beiden Ausprägungen (CII und UBL), und **CSV** für
+Lieferanten ohne strukturiertes Format — mit erkanntem Trennzeichen und
+Spalten, die über ihre Überschrift gefunden werden.
+
+Zugeordnet wird über GTIN, dann Artikelnummer, dann Name. Gebucht wird
+**nichts von allein**: jede Position zeigt, wie sicher die Zuordnung ist,
+vorbelegt ist nur das Sichere, und der Bediener hakt ab. Rechnungsnummer,
+Lieferant und Position stehen danach im Bestandsjournal — von dort führt der
+Weg zurück zum Ordner.
 
 **Was ausdrücklich nicht kommt:** Texterkennung auf einem Rechnungsfoto. Eine
 falsch erkannte Menge ist schlimmer als keine — sie sieht richtig aus. Wer einen
 Wareneingang aus einem unscharfen Foto bucht, hat einen Bestand, dem er nicht
-trauen kann, und merkt es erst bei der Inventur.
+trauen kann, und merkt es erst bei der Inventur. Eine PDF ohne eingebettete
+Rechnungsdaten wird deshalb abgewiesen, mit dem Hinweis auf den CSV-Weg.
 
-**Heute:** Wareneingang wird von Hand gebucht (Bildschirm „Bestand", Grund
-`PURCHASE`), mit Bemerkung für die Rechnungsnummer.
+**Was offen bleibt:** Barcode-Scannen am Gerät (die Kamera gehört in einen
+Entwicklungs-Build, siehe 1.4), und die Verbindlichkeit gegenüber dem
+Lieferanten — aus einer Rechnung entsteht hier ein Wareneingang im Bestand,
+keine Buchung in der Kreditorenbuchhaltung.
 
 ### 2.3 Kartenzahlung wirklich abwickeln
 
@@ -142,8 +151,13 @@ kleine Betriebe ist das der heutige Stand, nicht ein Mangel.
 führt der Artikel nur einen Verkaufspreis.
 
 **Zu tun:** Einkaufspreis je Artikel, gewichteter Durchschnitt über die
-Wareneingänge, Bestandswert im Bestandsbildschirm. Hängt sinnvollerweise an 2.2:
-der Einkaufspreis kommt aus der Lieferantenrechnung.
+Wareneingänge, Bestandswert im Bestandsbildschirm.
+
+Die halbe Strecke ist seit 2.2 gegangen: die Rechnung **liefert** den
+Nettoeinkaufspreis je Position, und der Wareneingangsbildschirm zeigt ihn an.
+Was fehlt, ist die andere Hälfte — ihn am Artikel zu führen und
+fortzuschreiben. Das ist ein Feld im Artikel und eine Migration, kein grosser
+Umbau.
 
 ### 2.5 Zusätze mit eigenem Steuersatz
 

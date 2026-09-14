@@ -32,7 +32,7 @@ erleben kann.
 | Bondruck über Bluetooth | Transport fertig, Gerätemodul offen |
 | Kartenzahlung und Tap to Pay | Schnittstelle und Simulator fertig, Anbieter fehlt |
 | DATEV- und Lexware-Export (Buchungsstapel) | fertig, Konten müssen bestätigt werden |
-| Wareneingang aus Lieferantenrechnung | offen |
+| Wareneingang aus Lieferantenrechnung (ZUGFeRD, XRechnung, CSV) | fertig |
 
 Was noch fehlt und warum, steht in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -70,7 +70,7 @@ npx expo export --platform android --platform ios --output-dir dist
 
 ### Tests
 
-507 Tests, aufgeteilt in zwei Arten:
+632 Tests, aufgeteilt in zwei Arten:
 
 * **Kerntests** (`packages/core/src/*.test.ts`) prüfen Rechnen und Recht ohne
   jede Umgebung: Centbeträge, Umsatzsteuer je Gruppe, Storno, Pfand, QR-Code

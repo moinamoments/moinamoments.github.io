@@ -3,7 +3,7 @@ import { deflateSync } from "node:zlib";
 import test from "node:test";
 
 import { parseInvoiceXml } from "./invoice.ts";
-import { PdfError, asInvoiceXml, extractInvoiceXml, looksLikePdf } from "./pdf.ts";
+import { PdfError, asInvoiceXml, base64ToBytes, extractInvoiceXml, looksLikePdf } from "./pdf.ts";
 
 const XML = `<?xml version="1.0" encoding="UTF-8"?>
 <rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100">
@@ -161,4 +161,26 @@ test("asInvoiceXml nimmt keine Binaerdaten an", () => {
   for (let index = 0; index < 64; index++) binaer[index] = 0x80 + (index % 64);
   assert.equal(asInvoiceXml(binaer), null);
   assert.equal(asInvoiceXml(new Uint8Array(0)), null);
+});
+
+test("Base64 in Bytes - gegen Buffer geprueft", () => {
+  for (const probe of ["", "a", "ab", "abc", "abcd", "Hallo Welt", "Müller & Söhne", "%PDF-1.7\n%âã"]) {
+    const erwartet = new Uint8Array(Buffer.from(probe, "utf8"));
+    assert.deepEqual(base64ToBytes(Buffer.from(probe, "utf8").toString("base64")), erwartet, probe);
+  }
+  // Auch mit Zeilenumbruechen, wie manche Werkzeuge sie setzen.
+  const lang = Buffer.from("x".repeat(200));
+  const umbrochen = lang.toString("base64").replace(/(.{76})/g, "$1\n");
+  assert.deepEqual(base64ToBytes(umbrochen), new Uint8Array(lang));
+});
+
+test("eine ganze ZUGFeRD-PDF ueber den Weg, den die App geht: Base64 -> Bytes -> XML", () => {
+  const pdf = buildPdf({ attachment: xmlBytes, flate: true });
+  const base64 = Buffer.from(pdf).toString("base64");
+  const invoice = parseInvoiceXml(extractInvoiceXml(base64ToBytes(base64)).content);
+  assert.equal(invoice.invoiceNumber, "RE-2026-0815");
+});
+
+test("kaputte Kodierung wird gemeldet", () => {
+  assert.throws(() => base64ToBytes("!!!not base64!!!"), PdfError);
 });

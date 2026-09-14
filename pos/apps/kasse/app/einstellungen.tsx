@@ -78,6 +78,12 @@ export default function EinstellungenScreen() {
         allowed: kasse.can("MANAGE_STOCK") || kasse.can("VIEW_REPORTS"),
       },
       {
+        title: "Wareneingang",
+        subtitle: "Lieferantenrechnung einlesen: ZUGFeRD, XRechnung, Tabelle",
+        route: "/wareneingang",
+        allowed: kasse.can("MANAGE_STOCK"),
+      },
+      {
         title: "Kassenbuch",
         subtitle: "Tageseroeffnung, Einlage, Entnahme, Geldtransit",
         route: "/kassenbuch",

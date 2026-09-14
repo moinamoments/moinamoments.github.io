@@ -241,3 +241,35 @@ export function asInvoiceXml(data: Uint8Array): string | null {
   if (/<(\w+:)?(Invoice|CreditNote)[\s>]/.test(head)) return text;
   return null;
 }
+
+/**
+ * Base64 in Bytes.
+ *
+ * Eine PDF-Datei ist binaer. `expo-file-system` liefert sie als Base64, weil
+ * eine Zeichenkette der einzige Weg ueber die Bruecke zwischen JavaScript und
+ * dem Betriebssystem ist. Hermes hat kein verlaessliches `atob` und kein
+ * `Buffer` - also hier, in fuenfzehn Zeilen, statt eines Pakets dafuer.
+ *
+ * Leerraum und Zeilenumbrueche werden uebergangen: manche Werkzeuge brechen
+ * Base64 alle 76 Zeichen um, und das ist kein Fehler.
+ */
+export function base64ToBytes(base64: string): Uint8Array {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const clean = base64.replace(/[\s=]/g, "");
+  const bytes = new Uint8Array(Math.floor((clean.length * 3) / 4));
+
+  let buffer = 0;
+  let bits = 0;
+  let out = 0;
+  for (const char of clean) {
+    const value = alphabet.indexOf(char);
+    if (value < 0) throw new PdfError("Die Datei konnte nicht gelesen werden (ungueltige Kodierung).");
+    buffer = (buffer << 6) | value;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes[out++] = (buffer >> bits) & 0xff;
+    }
+  }
+  return bytes.subarray(0, out);
+}

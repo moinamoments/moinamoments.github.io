@@ -243,6 +243,57 @@ sich auf etwas verlässt, das nicht da ist:
 * Nach einem Verlust: **PINs neu vergeben** und die TSE-Zugangsdaten beim
   Anbieter austauschen.
 
+## 6. Fremde Dateien
+
+Der Wareneingang (Bildschirm „Wareneingang") ist die einzige Stelle, an der die
+Kasse **eine Datei öffnet, die jemand anders geschrieben hat** — eine
+Lieferantenrechnung als PDF, XML oder CSV. Das ist eine eigene Angriffsfläche,
+und sie wird wie eine behandelt.
+
+### Keine Dokumenttypdefinition
+
+`<!DOCTYPE>` wird abgewiesen, bevor irgendetwas gelesen wird. Dort stehen
+Entitätsdefinitionen, und daran hängen zwei alte Angriffe:
+
+* **XXE** — eine Entität verweist auf `file:///…` und liest damit Dateien vom
+  Gerät in die Rechnung hinein. Ein Angreifer, der eine Rechnung schicken darf,
+  bekommt so den Inhalt der Kassendatenbank zu sehen.
+* **Die „Milliarde Lacher"** — verschachtelte Entitäten blähen wenige Kilobyte
+  auf Gigabyte im Speicher auf. Die App ist danach nicht gehackt, sondern
+  einfach aus, und zwar mitten im Verkauf.
+
+Wer keine Entitätsdefinitionen versteht, kann beides nicht. Echte ZUGFeRD- und
+XRechnungs-Dateien haben keinen DOCTYPE — abgewiesen wird also nichts, was ein
+Lieferant wirklich schickt.
+
+### Grenzen an jeder Stelle
+
+Jeder Leser hat eine Obergrenze, und zwar bevor gelesen wird, nicht danach:
+
+| Grenze | Wert | wogegen |
+| --- | --- | --- |
+| XML-Datei | 8 MB | Speicher |
+| Schachtelungstiefe | 40 Ebenen | Aufrufstapel |
+| XML-Elemente | 200 000 | Speicher und Rechenzeit |
+| PDF-Datei | 32 MB | Speicher |
+| Ausgepackte Daten | 64 MB | **Zip-Bombe** |
+| Rechnungspositionen | 1000 | Bedienbarkeit |
+
+Die Grenze beim Auspacken ist die wichtigste: Kompression erreicht Verhältnisse
+von 1:1000, eine winzige Datei kann zu einem Gigabyte werden. Geprüft wird
+**während** des Auspackens, nicht hinterher — hinterher wäre der Speicher schon
+voll.
+
+### Was die Daten aus der Datei dürfen
+
+Nichts von allein. Eine eingelesene Rechnung ist ein **Vorschlag**: sie ändert
+keinen Bestand, keinen Preis und keinen Artikel, bevor ein Mensch bestätigt hat.
+Eine Datei, die eine Menge von 10 000 behauptet, führt zu einer Zeile auf dem
+Bildschirm, nicht zu einer Buchung.
+
+Und: Artikel werden **nicht** aus der Rechnung angelegt oder geändert. Der
+Lieferant bestimmt nicht, was im Artikelstamm steht.
+
 ## Was bewusst offen ist
 
 * **Verschlüsselung der Datenbank** (SQLCipher) — braucht einen
@@ -252,6 +303,9 @@ sich auf etwas verlässt, das nicht da ist:
 * **Server samt Absicherung** — der Abgleich liegt heute in der Outbox und
   wartet.
 * **Zertifikatsbindung** (Certificate Pinning) für den Serverabgleich.
+* **Verschlüsselte PDF-Dateien** werden nicht geöffnet, sondern abgewiesen. Das
+  ist kein Mangel an Sicherheit, sondern eine fehlende Funktion — wer eine
+  geschützte Rechnung bekommt, braucht sie ungeschützt oder als XML.
 
 Diese Liste ist nicht Beschönigung, sondern der Punkt: eine Sicherheitslücke, die
 benannt ist, wird geschlossen. Eine, die verschwiegen wird, bleibt.

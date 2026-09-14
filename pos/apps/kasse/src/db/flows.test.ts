@@ -15,6 +15,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { deflateSync } from "node:zlib";
 import {
   NO_ATTEMPTS,
   ONE,
@@ -63,6 +64,13 @@ import {
   setServiceMode,
   stockState,
   MockTse,
+  assignProduct,
+  base64ToBytes,
+  bookGoodsReceipt,
+  checkInvoice,
+  extractInvoiceXml,
+  parseInvoiceXml,
+  planGoodsReceipt,
   type AuditEvent,
   type Category,
   type Device,
@@ -1602,6 +1610,146 @@ test("ein vollstaendiger Verkaufstag von der Anmeldung bis zum Abschluss", async
     const text = renderReceiptText(view, 32);
     for (const line of text.split("\n")) assert.ok(line.length <= 32, `zu lang: "${line}"`);
     assert.ok(text.includes("Teilstorno"));
+  } finally {
+    base.db.close();
+  }
+});
+
+/**
+ * Wareneingang aus einer Lieferantenrechnung, durch die echte Datenbank.
+ *
+ * Der Weg, den die App geht: PDF als Base64 lesen, das XML herausholen, gegen
+ * den Artikelstamm halten, die unsicheren Zeilen von Hand zuordnen, buchen -
+ * und danach steht der neue Bestand in der Datenbank und die Rechnungsnummer
+ * im Bestandsjournal.
+ */
+test("Wareneingang aus einer ZUGFeRD-Rechnung bis in den Bestand", async () => {
+  const base = await setup();
+  try {
+    // 1. Zwei Artikel mit Bestandsfuehrung. Der eine traegt die EAN des
+    // Lieferanten, der andere nicht - das ist der Normalfall.
+    const gruppe = base.categories[0]!;
+    const cola: Product = {
+      id: newId(), tenantId: base.tenant.id, categoryId: gruppe.id, name: "Cola 0,33 l",
+      price: 250, taxKey: 1, sku: "4001234567890", unit: "PIECE", trackStock: true, stock: 6 * ONE,
+      lowStockThreshold: 12 * ONE, sortOrder: 10, active: true, updatedAt: NOW,
+    };
+    const kaffee: Product = {
+      id: newId(), tenantId: base.tenant.id, categoryId: gruppe.id, name: "Kaffeebohnen kräftig",
+      price: 2500, taxKey: 2, unit: "KILOGRAM", trackStock: true, stock: ONE,
+      sortOrder: 20, active: true, updatedAt: NOW,
+    };
+    await saveProduct(base.db, cola);
+    await saveProduct(base.db, kaffee);
+
+    // 2. Die Rechnung, wie ein Grosshaendler sie schickt: ZUGFeRD, also eine
+    // PDF mit dem XML als gepacktem Anhang.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100">
+  <rsm:ExchangedDocument><ram:ID>RE-2026-4711</ram:ID>
+    <ram:IssueDateTime><udt:DateTimeString format="102">20260926</udt:DateTimeString></ram:IssueDateTime>
+  </rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument><ram:LineID>1</ram:LineID></ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedTradeProduct><ram:GlobalID schemeID="0160">4001234567890</ram:GlobalID><ram:Name>Cola Dose 0,33</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>0.6300</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="H87">24</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax><ram:RateApplicablePercent>19.00</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>15.12</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:IncludedSupplyChainTradeLineItem>
+      <ram:AssociatedDocumentLineDocument><ram:LineID>2</ram:LineID></ram:AssociatedDocumentLineDocument>
+      <ram:SpecifiedTradeProduct><ram:Name>Roestkaffee 1000g Packung</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>14.90</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="GRM">2000</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+      <ram:SpecifiedLineTradeSettlement>
+        <ram:ApplicableTradeTax><ram:RateApplicablePercent>7.00</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+        <ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>29.80</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation>
+      </ram:SpecifiedLineTradeSettlement>
+    </ram:IncludedSupplyChainTradeLineItem>
+    <ram:ApplicableHeaderTradeAgreement><ram:SellerTradeParty><ram:Name>Getraenke Mueller GmbH</ram:Name></ram:SellerTradeParty></ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeSettlement><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:TaxBasisTotalAmount>44.92</ram:TaxBasisTotalAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>`;
+
+    const anhang = new Uint8Array(deflateSync(new TextEncoder().encode(xml)));
+    const teile = [
+      new TextEncoder().encode("%PDF-1.7\n1 0 obj\n<< /Type /EmbeddedFile /Filter /FlateDecode /Length " + anhang.length + " >>\nstream\n"),
+      anhang,
+      new TextEncoder().encode("\nendstream\nendobj\n2 0 obj\n<< /Type /Filespec /F (factur-x.xml) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"),
+    ];
+    const pdf = new Uint8Array(teile.reduce((sum, teil) => sum + teil.length, 0));
+    let offset = 0;
+    for (const teil of teile) { pdf.set(teil, offset); offset += teil.length; }
+
+    // 3. So liest die App die Datei: als Base64 ueber die Bruecke zum
+    // Betriebssystem, dann Bytes, dann der Anhang, dann die Rechnung.
+    const invoice = parseInvoiceXml(extractInvoiceXml(base64ToBytes(Buffer.from(pdf).toString("base64"))).content);
+    assert.equal(invoice.invoiceNumber, "RE-2026-4711");
+    assert.equal(invoice.supplierName, "Getraenke Mueller GmbH");
+    assert.deepEqual(checkInvoice(invoice), [], "die Summenprobe muss aufgehen");
+
+    // 4. Gegen den Artikelstamm halten.
+    const plan = planGoodsReceipt(invoice, await listProducts(base.db));
+    assert.equal(plan.lines.length, 2);
+
+    // Die Cola trifft ueber die EAN - obwohl der Lieferant sie anders nennt.
+    assert.equal(plan.lines[0]!.match, "GTIN");
+    assert.equal(plan.lines[0]!.product?.id, cola.id);
+    assert.equal(plan.lines[0]!.selected, true);
+
+    // Der Kaffee heisst beim Lieferanten voellig anders: kein Treffer, also
+    // auch kein Vorschlag - der Bediener muss hinsehen.
+    assert.equal(plan.lines[1]!.product, null);
+    assert.equal(plan.lines[1]!.selected, false);
+    assert.equal(plan.readyCount, 1);
+    assert.equal(plan.openCount, 1);
+
+    // 2000 Gramm sind zwei Kilo, nicht zweitausend.
+    assert.equal(plan.lines[1]!.quantity, 2 * ONE);
+
+    // 5. Von Hand zuordnen - das tut der Bediener im Zuordnungsfenster.
+    const zugeordnet = {
+      ...plan,
+      lines: [plan.lines[0]!, assignProduct(plan.lines[1]!, kaffee)],
+    };
+    assert.equal(zugeordnet.lines[1]!.selected, true);
+
+    // 6. Buchen.
+    const { movements } = bookGoodsReceipt(
+      { ...zugeordnet, readyCount: 2, openCount: 0 },
+      { newId, storeId: base.store.id, userId: base.user.id, createdAt: "2026-09-26T10:15:00+02:00" },
+    );
+    assert.equal(movements.length, 2);
+    for (const movement of movements) await applyStockMovement(base.db, movement);
+
+    // 7. Der Bestand steht in der Datenbank, fortgeschrieben und nicht gesetzt.
+    const nachher = await listProducts(base.db);
+    assert.equal(nachher.find((item) => item.id === cola.id)!.stock, 30 * ONE, "6 + 24 Dosen");
+    assert.equal(nachher.find((item) => item.id === kaffee.id)!.stock, 3 * ONE, "1 kg + 2 kg");
+
+    // Und die Warnung "Bestand niedrig" ist damit weg.
+    assert.equal(stockState(nachher.find((item) => item.id === cola.id)!), "OK");
+
+    // 8. Das Journal fuehrt vom Bestand zurueck zur Rechnung im Ordner.
+    const journal = await listStockMovements(base.db, { limit: 10 });
+    const zugang = journal.filter((entry) => entry.reason === "PURCHASE");
+    assert.equal(zugang.length, 2);
+    assert.match(zugang[0]!.note ?? "", /RE-2026-4711/);
+    assert.match(zugang[0]!.note ?? "", /Getraenke Mueller GmbH/);
+    assert.match(zugang[0]!.note ?? "", /Pos\. [12]/);
+
+    // 9. Dieselbe Rechnung ein zweites Mal einzulesen ist moeglich - eine
+    // Nachlieferung sieht genauso aus. Der Bestand waechst dann erneut; das
+    // Journal zeigt beide Buchungen mit derselben Rechnungsnummer, und genau
+    // daran erkennt der Betrieb eine doppelte Buchung.
+    const nochmal = planGoodsReceipt(invoice, nachher);
+    assert.equal(nochmal.lines[0]!.selected, true);
   } finally {
     base.db.close();
   }
