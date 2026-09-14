@@ -64,6 +64,11 @@ export const MIGRATIONS: readonly Migration[] = [
         active INTEGER NOT NULL DEFAULT 1
       )`,
 
+      // Drucker und Terminal haengen am Geraet, nicht am Mandanten: der
+      // Bondrucker am Anhaenger ist ein anderer als der im Laden, und ein
+      // Kartenleser ist mit genau einem Telefon gekoppelt. Beides als JSON,
+      // weil es Einstellungen sind und keine Daten, nach denen gesucht wird -
+      // und weil die Form aus dem Kern kommt (PrinterConfig, TerminalConfig).
       `CREATE TABLE device (
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL REFERENCES tenant(id),
@@ -72,6 +77,13 @@ export const MIGRATIONS: readonly Migration[] = [
         serial_number TEXT NOT NULL,
         tse_client_id TEXT,
         receipt_prefix TEXT NOT NULL,
+        printer_json TEXT,
+        terminal_json TEXT,
+        -- Die Kasse, die dieses Geraet ist. Genau eine Zeile traegt 1; alle
+        -- anderen sind Kassen desselben Betriebs, die hier nur verwaltet
+        -- werden. Ohne diese Unterscheidung wuerde ein Betrieb mit drei Kassen
+        -- auf jedem Geraet dieselbe Belegnummer ziehen.
+        is_this_device INTEGER NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1
       )`,
 

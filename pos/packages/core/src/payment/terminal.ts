@@ -144,7 +144,7 @@ export interface PaymentTerminal {
    * Teilstorno auch bei Kartenzahlung moeglich.
    */
   refund(payment: { readonly reference: string; readonly amount: Cents }): Promise<TerminalPayment>;
-  /** Laufenden Vorgang abbrechen, wenn der Kunde es sich anders overlegt. */
+  /** Laufenden Vorgang abbrechen, wenn der Kunde es sich anders ueberlegt. */
   cancel(): Promise<void>;
 }
 

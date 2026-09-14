@@ -38,6 +38,10 @@ import {
   type LoginAttemptState,
   type ParkedSale,
   type Cart,
+  type PrinterConfig,
+  type TerminalConfig,
+  DEFAULT_PRINTER_CONFIG,
+  DEFAULT_TERMINAL_CONFIG,
   NO_ATTEMPTS,
 } from "@kp/core";
 import type { Db, SqlValue } from "./database.ts";
@@ -122,12 +126,11 @@ export async function saveStore(db: Db, store: Store): Promise<void> {
 
 interface DeviceRow {
   id: string; tenant_id: string; store_id: string; name: string; serial_number: string;
-  tse_client_id: string | null; receipt_prefix: string; active: number;
+  tse_client_id: string | null; receipt_prefix: string; printer_json: string | null;
+  terminal_json: string | null; is_this_device: number; active: number;
 }
 
-export async function getDevice(db: Db): Promise<Device | null> {
-  const row = await db.first<DeviceRow>("SELECT * FROM device WHERE active = 1 LIMIT 1");
-  if (!row) return null;
+function toDevice(row: DeviceRow): Device {
   return {
     id: row.id, tenantId: row.tenant_id, storeId: row.store_id, name: row.name,
     serialNumber: row.serial_number, tseClientId: row.tse_client_id,
@@ -135,15 +138,99 @@ export async function getDevice(db: Db): Promise<Device | null> {
   };
 }
 
-export async function saveDevice(db: Db, device: Device): Promise<void> {
-  await db.run(
-    `INSERT INTO device (id, tenant_id, store_id, name, serial_number, tse_client_id, receipt_prefix, active)
-     VALUES (?,?,?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET name = excluded.name, serial_number = excluded.serial_number,
-        tse_client_id = excluded.tse_client_id, receipt_prefix = excluded.receipt_prefix, active = excluded.active`,
-    [device.id, device.tenantId, device.storeId, device.name, device.serialNumber,
-      device.tseClientId ?? null, device.receiptPrefix, flag(device.active)],
+/**
+ * Die Kasse, die dieses Geraet ist.
+ *
+ * Nicht "die erste aktive": ein Betrieb mit drei Kassen hat drei Zeilen, und
+ * jedes Geraet muss seine eigene kennen - sonst ziehen zwei Geraete aus
+ * demselben Belegnummernkreis, und die DSFinV-K hat zwei Belege mit derselben
+ * Nummer. Das ist genau der Fehler, den `is_this_device` verhindert.
+ *
+ * Der Rueckfall auf die erste aktive Zeile gilt nur fuer eine Datenbank, in der
+ * noch keine Kasse gekennzeichnet ist - dann ist es die einzige.
+ */
+export async function getDevice(db: Db): Promise<Device | null> {
+  const row =
+    (await db.first<DeviceRow>("SELECT * FROM device WHERE is_this_device = 1 AND active = 1 LIMIT 1")) ??
+    (await db.first<DeviceRow>("SELECT * FROM device WHERE active = 1 ORDER BY rowid LIMIT 1"));
+  return row ? toDevice(row) : null;
+}
+
+/** Alle Kassen des Betriebs - fuer die Verwaltung. */
+export async function listDevices(db: Db, includeInactive = false): Promise<{ device: Device; isThisDevice: boolean }[]> {
+  const rows = await db.all<DeviceRow>(
+    `SELECT * FROM device ${includeInactive ? "" : "WHERE active = 1"} ORDER BY name`,
   );
+  return rows.map((row) => ({ device: toDevice(row), isThisDevice: bool(row.is_this_device) }));
+}
+
+export async function saveDevice(db: Db, device: Device, options: { readonly isThisDevice?: boolean } = {}): Promise<void> {
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO device (id, tenant_id, store_id, name, serial_number, tse_client_id, receipt_prefix,
+          printer_json, terminal_json, is_this_device, active)
+       VALUES (?,?,?,?,?,?,?,NULL,NULL,?,?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, serial_number = excluded.serial_number,
+          tse_client_id = excluded.tse_client_id, receipt_prefix = excluded.receipt_prefix,
+          active = excluded.active`,
+      [device.id, device.tenantId, device.storeId, device.name, device.serialNumber,
+        device.tseClientId ?? null, device.receiptPrefix, flag(options.isThisDevice === true), flag(device.active)],
+    );
+    if (options.isThisDevice === true) await markThisDevice(db, device.id);
+  });
+}
+
+/**
+ * Diese Kasse kennzeichnen.
+ *
+ * Genau eine Zeile traegt die Kennzeichnung. Das Zuruecksetzen der anderen
+ * gehoert in dieselbe Transaktion - zwei gekennzeichnete Kassen waeren
+ * schlimmer als keine.
+ */
+export async function markThisDevice(db: Db, deviceId: Id): Promise<void> {
+  await db.transaction(async () => {
+    await db.run("UPDATE device SET is_this_device = 0 WHERE id <> ?", [deviceId]);
+    await db.run("UPDATE device SET is_this_device = 1 WHERE id = ?", [deviceId]);
+  });
+}
+
+/**
+ * Drucker- und Terminaleinstellungen einer Kasse.
+ *
+ * Fehlerhaftes JSON ergibt die Voreinstellung, nicht einen Absturz: eine
+ * unlesbare Druckereinstellung darf die Kasse nicht am Verkaufen hindern - der
+ * Bon wird dann angezeigt statt gedruckt.
+ */
+export async function getDeviceConfig(
+  db: Db,
+  deviceId: Id,
+): Promise<{ printer: PrinterConfig; terminal: TerminalConfig }> {
+  const row = await db.first<{ printer_json: string | null; terminal_json: string | null }>(
+    "SELECT printer_json, terminal_json FROM device WHERE id = ?",
+    [deviceId],
+  );
+  const parse = <T>(json: string | null, fallback: T): T => {
+    if (!json) return fallback;
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      if (!parsed || typeof parsed !== "object") return fallback;
+      return { ...fallback, ...(parsed as T) };
+    } catch {
+      return fallback;
+    }
+  };
+  return {
+    printer: parse(row?.printer_json ?? null, DEFAULT_PRINTER_CONFIG),
+    terminal: parse(row?.terminal_json ?? null, DEFAULT_TERMINAL_CONFIG),
+  };
+}
+
+export async function savePrinterConfig(db: Db, deviceId: Id, config: PrinterConfig): Promise<void> {
+  await db.run("UPDATE device SET printer_json = ? WHERE id = ?", [JSON.stringify(config), deviceId]);
+}
+
+export async function saveTerminalConfig(db: Db, deviceId: Id, config: TerminalConfig): Promise<void> {
+  await db.run("UPDATE device SET terminal_json = ? WHERE id = ?", [JSON.stringify(config), deviceId]);
 }
 
 interface UserRow {

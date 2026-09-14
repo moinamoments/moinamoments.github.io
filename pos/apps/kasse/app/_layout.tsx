@@ -10,8 +10,9 @@ import React from "react";
 import { Tabs } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Text } from "react-native";
-import { KasseProvider } from "../src/state/KasseProvider.tsx";
+import { ActivityIndicator, Text, View } from "react-native";
+import { KasseProvider, useKasse } from "../src/state/KasseProvider.tsx";
+import { Anmeldung } from "../src/components/Anmeldung.tsx";
 import { colors, font } from "../src/theme.ts";
 
 /**
@@ -30,64 +31,100 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style="light" />
       <KasseProvider>
-        <Tabs
-          sceneContainerStyle={{ backgroundColor: colors.background }}
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.surface },
-            headerTitleStyle: { color: colors.text, fontSize: font.label },
-            headerTintColor: colors.text,
-            tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 64 },
-            tabBarActiveTintColor: colors.accent,
-            tabBarInactiveTintColor: colors.textMuted,
-            tabBarLabelStyle: { fontSize: font.small, fontWeight: "600" },
-          }}
-        >
-          <Tabs.Screen
-            name="index"
-            options={{
-              title: "Kasse",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="■" />,
-            }}
-          />
-          <Tabs.Screen
-            name="pfand"
-            options={{
-              title: "Pfand",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="↻" />,
-            }}
-          />
-          <Tabs.Screen
-            name="belege"
-            options={{
-              title: "Belege",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="≡" />,
-            }}
-          />
-          <Tabs.Screen
-            name="artikel"
-            options={{
-              title: "Artikel",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="▦" />,
-            }}
-          />
-          <Tabs.Screen
-            name="abschluss"
-            options={{
-              title: "Abschluss",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="✓" />,
-            }}
-          />
-          <Tabs.Screen
-            name="einstellungen"
-            options={{
-              title: "Einstellungen",
-              tabBarIcon: ({ color }) => <TabIcon color={color} glyph="⚙" />,
-            }}
-          />
-          {/* Der Bon wird aus dem Verkauf heraus geoeffnet, nicht ueber einen Reiter. */}
-          <Tabs.Screen name="bon/[id]" options={{ href: null, title: "Beleg" }} />
-        </Tabs>
+        <Gate />
       </KasseProvider>
     </SafeAreaProvider>
+  );
+}
+
+/**
+ * Sperre vor der Navigation.
+ *
+ * Der Anmeldebildschirm ersetzt die Reiter, statt ueber ihnen zu liegen: ein
+ * Fenster kann geschlossen werden, ein nicht gezeichneter Bildschirm nicht.
+ * Damit ist auch ein noch offener Verweis auf `/artikel` wirkungslos, solange
+ * gesperrt ist.
+ */
+function Gate() {
+  const kasse = useKasse();
+
+  if (!kasse.ready) {
+    return (
+      <View style={{ alignItems: "center", backgroundColor: colors.background, flex: 1, justifyContent: "center" }}>
+        <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
+  }
+
+  if (kasse.locked) return <Anmeldung />;
+
+  return <AppTabs />;
+}
+
+function AppTabs() {
+  return (
+    <Tabs
+      sceneContainerStyle={{ backgroundColor: colors.background }}
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.surface },
+        headerTitleStyle: { color: colors.text, fontSize: font.label },
+        headerTintColor: colors.text,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 64 },
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: font.small, fontWeight: "600" },
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: "Kasse",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="■" />,
+        }}
+      />
+      <Tabs.Screen
+        name="pfand"
+        options={{
+          title: "Pfand",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="↻" />,
+        }}
+      />
+      <Tabs.Screen
+        name="belege"
+        options={{
+          title: "Belege",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="≡" />,
+        }}
+      />
+      <Tabs.Screen
+        name="artikel"
+        options={{
+          title: "Artikel",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="▦" />,
+        }}
+      />
+      <Tabs.Screen
+        name="abschluss"
+        options={{
+          title: "Abschluss",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="✓" />,
+        }}
+      />
+      <Tabs.Screen
+        name="einstellungen"
+        options={{
+          title: "Einstellungen",
+          tabBarIcon: ({ color }) => <TabIcon color={color} glyph="⚙" />,
+        }}
+      />
+      {/* Der Bon wird aus dem Verkauf heraus geoeffnet, nicht ueber einen Reiter. */}
+      <Tabs.Screen name="bon/[id]" options={{ href: null, title: "Beleg" }} />
+      {/* Aus der Artikelverwaltung und dem Abschluss heraus geoeffnet. */}
+      <Tabs.Screen name="bestand" options={{ href: null, title: "Bestand" }} />
+      <Tabs.Screen name="kassenbuch" options={{ href: null, title: "Kassenbuch" }} />
+      <Tabs.Screen name="bediener" options={{ href: null, title: "Bediener und Rechte" }} />
+      <Tabs.Screen name="kassen" options={{ href: null, title: "Kassen" }} />
+      <Tabs.Screen name="protokoll" options={{ href: null, title: "Pruefprotokoll" }} />
+    </Tabs>
   );
 }

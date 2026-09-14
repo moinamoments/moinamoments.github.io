@@ -84,7 +84,10 @@ export async function ensureSeeded(db: Db, now: string, newId: () => string): Pr
 
   await saveTenant(db, tenant);
   await saveStore(db, store);
-  await saveDevice(db, device);
+  // Die erste Kasse ist *diese* Kasse. Weitere, die der Betrieb spaeter
+  // anlegt, sind Kassen der Verwaltung - jedes Geraet kennzeichnet seine
+  // eigene, damit die Belegnummernkreise nicht kollidieren.
+  await saveDevice(db, device, { isThisDevice: true });
   await saveUser(db, user);
 
   // Zwei Ebenen im Beispiel, damit sofort sichtbar ist, dass es Untergruppen
