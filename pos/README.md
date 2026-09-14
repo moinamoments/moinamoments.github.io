@@ -70,11 +70,16 @@ npx expo export --platform android --platform ios --output-dir dist
 
 ### Tests
 
-632 Tests, aufgeteilt in zwei Arten:
+645 Tests, aufgeteilt in drei Arten:
 
 * **Kerntests** (`packages/core/src/*.test.ts`) prüfen Rechnen und Recht ohne
   jede Umgebung: Centbeträge, Umsatzsteuer je Gruppe, Storno, Pfand, QR-Code
   Modul für Modul, Kryptobausteine byteweise gegen `node:crypto`.
+* **Härteproben** (`packages/core/src/purchase/robustness.test.ts`) werfen rund
+  zehntausend abgeschnittene, verdrehte und zufällige Dateien auf die
+  Rechnungsleser. Dort kommen Dateien an, die jemand anders geschrieben hat —
+  ein Leser darf sie lesen oder einen benannten Fehler werfen, aber niemals
+  abstürzen, kreisen oder eine unbrauchbare Zahl in den Bestand schreiben.
 * **Ablauftests** (`apps/kasse/src/db/flows.test.ts`) gehen die Wege, die am
   Verkaufsstand wirklich gegangen werden — **durch das echte Schema**, mit
   denselben Triggern und denselben Abfragen wie in der App. Darunter ein
