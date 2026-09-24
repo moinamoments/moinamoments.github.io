@@ -1,7 +1,7 @@
 # MOINA – Golden Moments · Website
 
 Statische Marketing-Website für den mobilen Verkaufsanhänger **MOINA – Golden Moments**
-(Crêpes, Mutzen, Churros, Kaffee, Tee, Kaltgetränke). Start: **Ende September 2026**.
+(Crêpes, Mutzen, Churros, Kaffee, Tee, Kaltgetränke). Eröffnung **in Kürze**.
 
 Kein Build-Prozess, keine Abhängigkeiten – reines HTML, CSS und JavaScript.
 Direkt über GitHub Pages hostbar.
