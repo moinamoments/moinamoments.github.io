@@ -23,7 +23,7 @@ impressum.html        Impressum – Platzhalter, muss ausgefüllt werden
 datenschutz.html      Datenschutzerklärung – Platzhalter, muss geprüft werden
 assets/css/style.css  Gesamtes Design
 assets/js/menu-data.js  ► SPEISEKARTE – hier die Menüitems pflegen
-assets/js/main.js       Countdown, Navigation, Galerie, Formular + Konfiguration
+assets/js/main.js       Navigation, Galerie, Formular + Konfiguration
 assets/img/           Web-optimierte Bilder
 quellbilder/          Original-Fotos (für die Website nicht nötig)
 .nojekyll             Nötig, damit GitHub Pages die Dateien 1:1 ausliefert
@@ -35,7 +35,6 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 
 | Wo | Was |
 |---|---|
-| `assets/js/main.js` (oben, `CONFIG`) | Genaues Eröffnungsdatum |
 | `assets/js/main.js` (oben, `CONFIG`) | `goatCounterCode` – siehe unten |
 | `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
 
@@ -56,16 +55,6 @@ Alles steckt in `assets/js/menu-data.js`. Ein Eintrag sieht so aus:
 * `price` weglassen → es erscheint ein „—“ als Platzhalter
 * `tag` ist optional (z. B. „Neu“, „Vegan“, „Saison“)
 * Neue Kategorie = neuer Block mit `id`, `label` und `items` – der Reiter erscheint automatisch
-
-### Eröffnungsdatum ändern
-
-In `assets/js/main.js` ganz oben:
-
-```js
-launchDate: new Date(2026, 8, 26, 11, 0, 0) // Monat ist 0-basiert: 8 = September
-```
-
-Der Countdown blendet sich nach Ablauf automatisch aus und zeigt „Wir sind da – kommt vorbei!“.
 
 ---
 
