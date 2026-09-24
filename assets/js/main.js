@@ -1,6 +1,6 @@
 /* ==========================================================================
    MOINA – Golden Moments
-   Interaktionen: Navigation, Countdown, Speisekarte, Galerie, Schema
+   Interaktionen: Navigation, Speisekarte, Galerie, Schema
    Keine Abhängigkeiten – reines Vanilla JS.
    ========================================================================== */
 
@@ -8,9 +8,6 @@
    KONFIGURATION – hier anpassen
    -------------------------------------------------------------------------- */
 const CONFIG = {
-  // Eröffnungstermin (Platzhalter). Format: Jahr, Monat-1, Tag, Stunde, Minute
-  launchDate: new Date(2026, 8, 26, 11, 0, 0), // 26.09.2026, 11:00 Uhr
-
   // GoatCounter – datenschutzfreundliche Reichweitenmessung ohne Cookies.
   // Hier NUR den Code eintragen, den du bei der Anmeldung auf goatcounter.com
   // gewählt hast: aus "https://beispiel.goatcounter.com" wird also "beispiel".
@@ -21,7 +18,6 @@ const CONFIG = {
 document.addEventListener("DOMContentLoaded", () => {
   initHeader();
   initNav();
-  initCountdown();
   initMenu();
   initMenuSchema();
   initGallery();
@@ -101,40 +97,6 @@ function initNav() {
     { rootMargin: "-45% 0px -50% 0px" }
   );
   sections.forEach((s) => spy.observe(s));
-}
-
-/* --- Countdown bis zur Eröffnung ----------------------------------------- */
-function initCountdown() {
-  const root = document.querySelector("[data-countdown]");
-  if (!root) return;
-
-  const fields = {
-    days: root.querySelector('[data-unit="days"]'),
-    hours: root.querySelector('[data-unit="hours"]'),
-    minutes: root.querySelector('[data-unit="minutes"]'),
-    seconds: root.querySelector('[data-unit="seconds"]')
-  };
-  const note = document.querySelector("[data-countdown-note]");
-
-  const pad = (n) => String(n).padStart(2, "0");
-
-  const tick = () => {
-    const diff = CONFIG.launchDate - new Date();
-    if (diff <= 0) {
-      root.hidden = true;
-      if (note) note.textContent = "Wir sind da – kommt vorbei!";
-      clearInterval(timer);
-      return;
-    }
-    const s = Math.floor(diff / 1000);
-    fields.days.textContent = Math.floor(s / 86400);
-    fields.hours.textContent = pad(Math.floor(s / 3600) % 24);
-    fields.minutes.textContent = pad(Math.floor(s / 60) % 60);
-    fields.seconds.textContent = pad(s % 60);
-  };
-
-  tick();
-  const timer = setInterval(tick, 1000);
 }
 
 /* --- Speisekarte aus menu-data.js rendern -------------------------------- */

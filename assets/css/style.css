@@ -216,23 +216,6 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
   100% { transform: scaleY(0); transform-origin: bottom; }
 }
 
-/* --- Countdown ----------------------------------------------------------- */
-.countdown {
-  display: flex; justify-content: center; gap: clamp(.5rem, 2.5vw, 1.75rem);
-  margin: 0 auto 1.5rem; flex-wrap: wrap;
-}
-.countdown__unit {
-  min-width: clamp(66px, 17vw, 96px); padding: .9rem .5rem .75rem;
-  border: 1px solid rgba(201,162,39,.3); border-radius: var(--radius);
-  background: rgba(250,247,241,.04);
-}
-.countdown__num {
-  display: block; font-family: var(--font-display); font-size: clamp(1.8rem, 5vw, 2.6rem);
-  color: var(--gold-soft); line-height: 1; font-variant-numeric: tabular-nums;
-}
-.countdown__label { font-size: .6rem; letter-spacing: .2em; text-transform: uppercase; color: rgba(250,247,241,.55); }
-.countdown__note { text-align: center; font-size: .74rem; color: var(--gold-soft); letter-spacing: .18em; text-transform: uppercase; margin-bottom: 2.25rem; }
-
 /* --- Laufband ------------------------------------------------------------ */
 .marquee {
   background: var(--ink-2); color: var(--sand); overflow: hidden;
