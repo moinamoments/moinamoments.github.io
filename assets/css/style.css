@@ -544,3 +544,15 @@ h2.title { font-size: clamp(2.1rem, 5.2vw, 3.4rem); }
   color: rgba(250, 247, 241, .5);
   padding-top: 1.5rem; border-top: 1px solid rgba(250, 247, 241, .12);
 }
+
+/* Ankuendigung im Startbereich (aus termine-data.js, ankuendigung: true) */
+.hero__news {
+  display: inline-block; margin: 0 auto 2.25rem; padding: .65rem 1.3rem;
+  border: 1px solid var(--line-gold); border-radius: 100px;
+  background: rgba(201, 162, 39, .1);
+  font-size: .92rem; line-height: 1.5; color: var(--gold-soft);
+}
+.hero__news[hidden] { display: none; }
+.hero__news a { color: inherit; }
+.hero__news a:hover { color: var(--cream); }
+.hero__news strong { color: var(--cream); font-weight: 400; white-space: nowrap; }

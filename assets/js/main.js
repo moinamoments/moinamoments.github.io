@@ -298,14 +298,28 @@ function initTermine() {
 
   if (!kommend.length) return;
 
-  // "Heute" / "Morgen" bezogen auf das Kieler Datum
+  // "Heute" / "Morgen" bezogen auf das Kieler Datum, sonst der Wochentag
   const kielHeute = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Berlin" }).format(now);
   const morgen = new Date(Date.parse(kielHeute + "T12:00:00Z") + 864e5).toISOString().slice(0, 10);
+  const tagLabel = (datum) =>
+    datum === kielHeute ? "Heute" : datum === morgen ? "Morgen"
+      : WOCHENTAGE[new Date(datum + "T12:00:00Z").getUTCDay()];
+
+  // Ankuendigung im Startbereich: der naechste Termin mit ankuendigung: true
+  const news = document.querySelector("[data-ankuendigung]");
+  const highlight = kommend.find((t) => t.ankuendigung);
+  if (news && highlight) {
+    const [, hm, hd] = highlight.datum.split("-").map(Number);
+    const tag = tagLabel(highlight.datum);
+    const wann = tag === "Heute" || tag === "Morgen" ? tag : `${tag}, ${hd}. ${MONATE[hm - 1]}`;
+    news.innerHTML = `<a href="#termine">${escapeHtml(highlight.titel)} · `
+      + `<strong>${wann}, ${uhr(highlight.von)}–${uhr(highlight.bis)} Uhr</strong></a>`;
+    news.hidden = false;
+  }
 
   list.innerHTML = kommend.map((t) => {
     const [, m, d] = t.datum.split("-").map(Number);
-    const wochentag = WOCHENTAGE[new Date(t.datum + "T12:00:00Z").getUTCDay()];
-    const tag = t.datum === kielHeute ? "Heute" : t.datum === morgen ? "Morgen" : wochentag;
+    const tag = tagLabel(t.datum);
     const ortText = [t.ort, t.stadt].filter(Boolean).join(", ");
     const karte = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(ortText);
     const hinweis = t.hinweis ? `<p>${escapeHtml(t.hinweis)}</p>` : "";

@@ -15,8 +15,9 @@
        titel:   "Markt am Exerzierplatz",
        ort:     "Exerzierplatz",           // Platz oder Straße
        stadt:   "Kiel",
-       hinweis: ""                         // optional, z. B. "nur Mutzen"
-     }
+       hinweis: "",                        // optional, z. B. "nur Mutzen"
+       ankuendigung: true                  // optional: zusaetzlich oben im
+     }                                     // Startbereich ankuendigen
    ========================================================================== */
 
 const TERMINE = [
@@ -24,8 +25,9 @@ const TERMINE = [
     datum: "2026-10-17",
     von: "08:00",
     bis: "13:00",
-    titel: "Markt am Exerzierplatz",
+    titel: "Eröffnung auf dem Markt am Exerzierplatz",
     ort: "Exerzierplatz",
-    stadt: "Kiel"
+    stadt: "Kiel",
+    ankuendigung: true
   }
 ];
