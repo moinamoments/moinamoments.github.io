@@ -24,7 +24,7 @@ const MENU = [
       { name: "Nutella",              desc: "Warm verstrichen, bis sie glänzt.",                 price: "5,00 €" },
       { name: "Joghurette",           desc: "Geschmolzene Joghurette – fruchtig und cremig.",    price: "5,50 €" },
       { name: "Kinderriegel",         desc: "Geschmolzener Kinderriegel, warm verstrichen.",     price: "5,50 €", tag: "Beliebt" },
-      { name: "Karamell & Meersalz",  desc: "Salzkaramell mit Sahnehaube.",                      price: "5,00 €" },
+      { name: "Karamell",             desc: "Warme Karamellsauce mit Sahnehaube.",               price: "5,00 €" },
       { name: "Lotus Biscoff",        desc: "Cremiger Lotus-Biscoff-Aufstrich, warm verstrichen, mit zerbröseltem Karamellkeks.", price: "5,00 €", tag: "Neu" }
     ]
   },
@@ -53,9 +53,9 @@ const MENU = [
     label: "Churros",
     note: "Churros oder Mutzen – wir wechseln je nach Standort ab. Was heute dabei ist, steht auf Instagram.",
     items: [
-      { name: "Churros klassisch",    desc: "Knusprig gebacken, in Zimt-Zucker gewälzt.", price: "5,00 €", tag: "Klassiker" },
+      { name: "Churros klassisch",    desc: "Knusprig gebacken, in Zimt-Zucker gewälzt.", price: "5,00 €", tag: "Vegan" },
       { name: "Churros mit Nutella",  desc: "Mit warmem Nutella zum Dippen.",             price: "5,50 €", tag: "Beliebt" },
-      { name: "Churros Karamell",     desc: "Mit Salzkaramell-Sauce.",                    price: "5,50 €" },
+      { name: "Churros Karamell",     desc: "Mit Karamellsauce zum Dippen.",              price: "5,50 €" },
       { name: "Churros Deluxe",       desc: "Doppelte Portion, zwei Saucen nach Wahl.",   price: "9,00 €" }
     ]
   },
@@ -64,8 +64,8 @@ const MENU = [
     label: "Toppings",
     note: "Zum Draufstreuen – auf Crêpes, Mutzen oder Churros.",
     items: [
-      { name: "Geröstete Haselnüsse", desc: "Frisch geröstet und grob gehackt.", price: "0,80 €" },
-      { name: "Krokant",              desc: "Knuspriger Nusskrokant.",           price: "0,70 €" },
+      { name: "Gehackte Haselnüsse",  desc: "Grob gehackte Haselnusskerne.",     price: "0,80 €" },
+      { name: "Salted-Caramel-Krokant", desc: "Knuspriger Haselnuss-Krokant mit einer Prise Salz.", price: "0,70 €" },
       { name: "Schokostreusel",       desc: "Feine Schokostreusel.",             price: "0,70 €" }
     ]
   },
