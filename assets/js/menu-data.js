@@ -22,7 +22,7 @@ const MENU = [
     items: [
       { name: "Zimt & Zucker",        desc: "Der Klassiker – hauchdünn, frisch von der Platte.", price: "4,50 €", tag: "Klassiker" },
       { name: "Nutella",              desc: "Warm verstrichen, bis sie glänzt.",                 price: "5,00 €" },
-      { name: "Joghurette",           desc: "Geschmolzene Joghurette – fruchtig und cremig.",    price: "5,50 €" },
+      { name: "Yogurette",            desc: "Geschmolzene Yogurette – fruchtig und cremig.",     price: "5,50 €" },
       { name: "Kinderriegel",         desc: "Geschmolzener Kinderriegel, warm verstrichen.",     price: "5,50 €", tag: "Beliebt" },
       { name: "Karamell",             desc: "Warme Karamellsauce mit Sahnehaube.",               price: "5,00 €" },
       { name: "Lotus Biscoff",        desc: "Cremiger Lotus-Biscoff-Aufstrich, warm verstrichen, mit zerbröseltem Karamellkeks.", price: "5,00 €", tag: "Neu" }
