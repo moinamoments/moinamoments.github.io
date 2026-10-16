@@ -394,34 +394,20 @@
       <p class="eyebrow">Standorte &amp; Termine</p>
       <h2 class="title">Wo ihr uns findet.</h2>
       <p class="lead">
-        Unsere ersten Termine stehen bald fest. Sobald es losgeht, findet ihr hier immer
-        die aktuellen Standorte – und kurzfristige Änderungen
+        Hier findet ihr unsere nächsten Standorte. Kurzfristige Änderungen – und ob es
+        Churros oder Mutzen gibt – stehen
         <a href="https://www.instagram.com/moina.goldenmoments/" target="_blank" rel="noopener"><u>auf Instagram</u></a>.
       </p>
     </div>
 
-    <div class="dates">
-      <article class="date-card date-card--placeholder reveal">
+    <!-- Wird aus assets/js/termine-data.js befuellt. Der Platzhalter bleibt
+         stehen, wenn kein kommender Termin eingetragen ist. -->
+    <div class="dates reveal" data-termine>
+      <article class="date-card date-card--placeholder">
         <div class="date-card__day"><b>—</b><span>Bald</span></div>
         <div>
-          <h3>Eröffnung</h3>
-          <p>Ort und Uhrzeit werden noch bekannt gegeben.</p>
-        </div>
-      </article>
-
-      <article class="date-card date-card--placeholder reveal">
-        <div class="date-card__day"><b>—</b><span>Bald</span></div>
-        <div>
-          <h3>Termin folgt</h3>
-          <p>Hier erscheint der nächste Markt- oder Festtermin.</p>
-        </div>
-      </article>
-
-      <article class="date-card date-card--placeholder reveal">
-        <div class="date-card__day"><b>—</b><span>Bald</span></div>
-        <div>
-          <h3>Termin folgt</h3>
-          <p>Hier erscheint der nächste Markt- oder Festtermin.</p>
+          <h3>Nächster Termin folgt</h3>
+          <p>Neue Markt- und Festtermine kündigen wir hier und auf Instagram an.</p>
         </div>
       </article>
     </div>
@@ -596,6 +582,7 @@
 </div>
 
 <script src="assets/js/menu-data.js"></script>
+<script src="assets/js/termine-data.js"></script>
 <script src="assets/js/main.js"></script>
 </body>
 </html>

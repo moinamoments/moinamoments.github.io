@@ -15,15 +15,14 @@ const CONFIG = {
   goatCounterCode: "moinamoments"
 };
 
+// Jede Funktion laeuft einzeln abgesichert: Ein Fehler in einer davon darf
+// nicht die uebrigen verhindern (sonst bleiben z. B. alle .reveal-Bloecke
+// unsichtbar und die Speisekarte leer).
 document.addEventListener("DOMContentLoaded", () => {
-  initHeader();
-  initNav();
-  initMenu();
-  initMenuSchema();
-  initGallery();
-  initReveal();
-  initYear();
-  initAnalytics();
+  [initHeader, initNav, initMenu, initMenuSchema, initTermine,
+   initGallery, initReveal, initYear, initAnalytics].forEach((init) => {
+    try { init(); } catch (err) { console.error(init.name + ":", err); }
+  });
 });
 
 /* --- GoatCounter -----------------------------------------------------------
@@ -255,6 +254,95 @@ function initMenuSchema() {
   const script = document.createElement("script");
   script.type = "application/ld+json";
   script.textContent = JSON.stringify(graph, null, 2);
+  document.head.appendChild(script);
+}
+
+/* --- Termine aus termine-data.js ------------------------------------------
+   Zeigt nur kommende Termine (Endzeit noch nicht erreicht), sortiert nach
+   Datum, und haengt sie als Event-Daten fuer Google an. Gibt es keinen
+   kommenden Termin, bleibt der Platzhalter aus dem HTML stehen.
+   ------------------------------------------------------------------------- */
+const MONATE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+const WOCHENTAGE = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+
+function escapeHtml(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+// Zeitzonen-Versatz von Kiel an einem Datum: Sommerzeit gilt in der EU vom
+// letzten Sonntag im Maerz bis zum letzten Sonntag im Oktober (je 01:00 UTC).
+function kielOffset(datum) {
+  const [y, m, d] = datum.split("-").map(Number);
+  const lastSunday = (month) => {
+    const last = new Date(Date.UTC(y, month + 1, 0));
+    return last.getUTCDate() - last.getUTCDay();
+  };
+  const t = Date.UTC(y, m - 1, d, 12);
+  const start = Date.UTC(y, 2, lastSunday(2), 1);
+  const end = Date.UTC(y, 9, lastSunday(9), 1);
+  return t >= start && t < end ? "+02:00" : "+01:00";
+}
+
+const isoKiel = (datum, zeit) => `${datum}T${zeit}:00${kielOffset(datum)}`;
+const uhr = (zeit) => zeit.replace(/^0/, "").replace(/:00$/, "");
+
+function initTermine() {
+  const list = document.querySelector("[data-termine]");
+  if (!list || typeof TERMINE === "undefined" || !Array.isArray(TERMINE)) return;
+
+  const now = new Date();
+  const kommend = TERMINE
+    .filter((t) => t.datum && t.von && t.bis && new Date(isoKiel(t.datum, t.bis)) > now)
+    .sort((a, b) => new Date(isoKiel(a.datum, a.von)) - new Date(isoKiel(b.datum, b.von)));
+
+  if (!kommend.length) return;
+
+  // "Heute" / "Morgen" bezogen auf das Kieler Datum
+  const kielHeute = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Berlin" }).format(now);
+  const morgen = new Date(Date.parse(kielHeute + "T12:00:00Z") + 864e5).toISOString().slice(0, 10);
+
+  list.innerHTML = kommend.map((t) => {
+    const [, m, d] = t.datum.split("-").map(Number);
+    const wochentag = WOCHENTAGE[new Date(t.datum + "T12:00:00Z").getUTCDay()];
+    const tag = t.datum === kielHeute ? "Heute" : t.datum === morgen ? "Morgen" : wochentag;
+    const ortText = [t.ort, t.stadt].filter(Boolean).join(", ");
+    const karte = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(ortText);
+    const hinweis = t.hinweis ? `<p>${escapeHtml(t.hinweis)}</p>` : "";
+    return `
+      <article class="date-card">
+        <div class="date-card__day"><b>${d}</b><span>${MONATE[m - 1]}</span></div>
+        <div>
+          <h3>${escapeHtml(t.titel)}</h3>
+          <p><strong>${tag}</strong> · ${uhr(t.von)}–${uhr(t.bis)} Uhr</p>
+          <p><a href="${karte}" target="_blank" rel="noopener"><u>${escapeHtml(ortText)}</u></a></p>
+          ${hinweis}
+        </div>
+      </article>`;
+  }).join("");
+
+  const events = kommend.map((t) => ({
+    "@type": "Event",
+    name: `MOINA – ${t.titel}`,
+    description: "Frische Crêpes, Churros oder Mutzen, Kaffee und Kaltgetränke aus dem MOINA-Verkaufsanhänger.",
+    startDate: isoKiel(t.datum, t.von),
+    endDate: isoKiel(t.datum, t.bis),
+    eventStatus: "https://schema.org/EventScheduled",
+    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    isAccessibleForFree: true,
+    location: {
+      "@type": "Place",
+      name: t.ort || t.titel,
+      address: { "@type": "PostalAddress", addressLocality: t.stadt, addressCountry: "DE" }
+    },
+    organizer: { "@id": BUSINESS_ID },
+    image: [SITE_URL + "assets/img/anhaenger-beschriftet.jpg"],
+    url: SITE_URL + "#termine"
+  }));
+
+  const script = document.createElement("script");
+  script.type = "application/ld+json";
+  script.textContent = JSON.stringify({ "@context": "https://schema.org", "@graph": events }, null, 2);
   document.head.appendChild(script);
 }
 

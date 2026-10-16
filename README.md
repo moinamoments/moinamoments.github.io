@@ -23,6 +23,7 @@ impressum.html        Impressum – Platzhalter, muss ausgefüllt werden
 datenschutz.html      Datenschutzerklärung – Platzhalter, muss geprüft werden
 assets/css/style.css  Gesamtes Design
 assets/js/menu-data.js  ► SPEISEKARTE – hier die Menüitems pflegen
+assets/js/termine-data.js ► TERMINE – hier Markt- und Festtermine eintragen
 assets/js/main.js       Navigation, Galerie, Formular + Konfiguration
 assets/img/           Web-optimierte Bilder
 quellbilder/          Original-Fotos (für die Website nicht nötig)
@@ -33,16 +34,29 @@ quellbilder/          Original-Fotos (für die Website nicht nötig)
 
 ## Was noch ausgefüllt werden muss
 
-| Wo | Was |
-|---|---|
-| `assets/js/main.js` (oben, `CONFIG`) | `goatCounterCode` – siehe unten |
-| `index.html` – Abschnitt „Termine“ | Echte Termine statt der Platzhalter-Karten |
+Nichts Zwingendes mehr. Laufend zu pflegen sind nur die Termine (siehe unten).
 
 Die Speisekarte ist vollständig: 30 Positionen mit Preisen (Stand: August 2026).
 Preisspanne 0,70 € bis 9,00 €, hinterlegt als `priceRange` im JSON-LD.
 
 Kontaktdaten, Impressum und Datenschutzerklärung sind vollständig ausgefüllt
 (Mehmet Gelgel, Kiel, `info@moinamoments.de`, Kleinunternehmer nach § 19 UStG).
+
+### Termine pflegen
+
+Alle Markt- und Festtermine stehen in `assets/js/termine-data.js`:
+
+```js
+{ datum: "2026-10-17", von: "08:00", bis: "13:00",
+  titel: "Markt am Exerzierplatz", ort: "Exerzierplatz", stadt: "Kiel" }
+```
+
+* Uhrzeiten in Kieler Zeit, Sommer- und Winterzeit werden automatisch berücksichtigt
+* Die Karte zeigt „Heute“ bzw. „Morgen“ statt des Wochentags und verlinkt den Ort auf Google Maps
+* Vergangene Termine verschwinden von selbst, sobald ihre Endzeit vorbei ist
+* Ist kein Termin eingetragen, erscheint der Platzhalter „Nächster Termin folgt“
+* Jeder kommende Termin wird zusätzlich als `Event` für Google ausgegeben
+* Optional: `hinweis: "..."` für eine zusätzliche Zeile auf der Karte
 
 ### Speisekarte pflegen
 
