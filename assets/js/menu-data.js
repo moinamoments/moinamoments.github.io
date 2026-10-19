@@ -53,9 +53,9 @@ const MENU = [
     label: "Churros",
     note: "Churros oder Mutzen – wir wechseln je nach Standort ab. Was heute dabei ist, steht auf Instagram.",
     items: [
-      { name: "Churros klassisch",    desc: "Knusprig gebacken, in Zimt-Zucker gewälzt.", price: "5,00 €", tag: "Vegan" },
-      { name: "Churros mit Nutella",  desc: "Mit warmem Nutella zum Dippen.",             price: "5,50 €", tag: "Beliebt" },
-      { name: "Churros Karamell",     desc: "Mit Karamellsauce zum Dippen.",              price: "5,50 €" },
+      { name: "Churros klassisch",    desc: "Knusprig gebacken, in Zimt-Zucker gewälzt.", price: "6,00 €", tag: "Vegan" },
+      { name: "Churros mit Nutella",  desc: "Mit warmem Nutella zum Dippen.",             price: "6,50 €", tag: "Beliebt" },
+      { name: "Churros Karamell",     desc: "Mit Karamellsauce zum Dippen.",              price: "6,50 €" },
       { name: "Churros Deluxe",       desc: "Doppelte Portion, zwei Saucen nach Wahl.",   price: "9,00 €" }
     ]
   },
@@ -74,8 +74,8 @@ const MENU = [
     label: "Kaffee & Tee",
     items: [
       { name: "Espresso",             desc: "Kräftig und kurz.",                    price: "1,50 €" },
-      { name: "Café Crème",           desc: "Mild und ausgewogen.",                 price: "2,50 €" },
-      { name: "Cappuccino",           desc: "Mit feinporigem Milchschaum.",         price: "3,00 €" },
+      { name: "Café Crème",           desc: "Mild und ausgewogen.",                 price: "3,00 €" },
+      { name: "Cappuccino",           desc: "Mit feinporigem Milchschaum.",         price: "3,30 €" },
       { name: "Latte Macchiato",      desc: "Im großen Becher, in Schichten.",      price: "3,50 €" },
       { name: "Heiße Schokolade",     desc: "Mit Milch, auf Wunsch mit Sahnehaube.",price: "3,00 €" },
       { name: "Teeauswahl",           desc: "Schwarz, grün, Kräuter oder Früchte.", price: "2,00 €" }
