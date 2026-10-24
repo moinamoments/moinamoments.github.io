@@ -287,39 +287,72 @@ function kielOffset(datum) {
 const isoKiel = (datum, zeit) => `${datum}T${zeit}:00${kielOffset(datum)}`;
 const uhr = (zeit) => zeit.replace(/^0/, "").replace(/:00$/, "");
 
+const addDays = (datum, n) =>
+  new Date(Date.parse(datum + "T12:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+const wochentagVon = (datum) => new Date(datum + "T12:00:00Z").getUTCDay();
+
+// Regelmaessigen Termin ("jeden: Samstag") in die naechsten konkreten Daten
+// ab heute aufloesen – unter Beachtung von ab, endet und ausser.
+function naechsteTermine(t, heute, anzahl) {
+  const ziel = WOCHENTAGE.indexOf(t.jeden);
+  if (ziel < 0) return [];
+  let datum = t.ab && t.ab > heute ? t.ab : heute;
+  datum = addDays(datum, (ziel - wochentagVon(datum) + 7) % 7);
+  const ausser = Array.isArray(t.ausser) ? t.ausser : [];
+  const out = [];
+  for (let i = 0; out.length < anzahl && i < anzahl + 26; i++, datum = addDays(datum, 7)) {
+    if (t.endet && datum > t.endet) break;
+    if (!ausser.includes(datum)) out.push({ ...t, datum });
+  }
+  return out;
+}
+
 function initTermine() {
   const list = document.querySelector("[data-termine]");
   if (!list || typeof TERMINE === "undefined" || !Array.isArray(TERMINE)) return;
 
   const now = new Date();
-  const kommend = TERMINE
-    .filter((t) => t.datum && t.von && t.bis && new Date(isoKiel(t.datum, t.bis)) > now)
-    .sort((a, b) => new Date(isoKiel(a.datum, a.von)) - new Date(isoKiel(b.datum, b.von)));
-
-  if (!kommend.length) return;
-
   // "Heute" / "Morgen" bezogen auf das Kieler Datum, sonst der Wochentag
   const kielHeute = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Berlin" }).format(now);
-  const morgen = new Date(Date.parse(kielHeute + "T12:00:00Z") + 864e5).toISOString().slice(0, 10);
+  const morgen = addDays(kielHeute, 1);
   const tagLabel = (datum) =>
-    datum === kielHeute ? "Heute" : datum === morgen ? "Morgen"
-      : WOCHENTAGE[new Date(datum + "T12:00:00Z").getUTCDay()];
+    datum === kielHeute ? "Heute" : datum === morgen ? "Morgen" : WOCHENTAGE[wochentagVon(datum)];
+  const nachZeit = (a, b) => new Date(isoKiel(a.datum, a.von)) - new Date(isoKiel(b.datum, b.von));
+
+  // Je Eintrag die kommenden Termine (Endzeit noch nicht erreicht);
+  // regelmaessige Eintraege liefern mehrere, Einzeltermine hoechstens einen.
+  const reihen = TERMINE
+    .filter((t) => t.von && t.bis && (t.datum || t.jeden))
+    .map((t) => (t.jeden ? naechsteTermine(t, kielHeute, 5) : [t])
+      .filter((x) => x.datum && new Date(isoKiel(x.datum, x.bis)) > now))
+    .filter((reihe) => reihe.length);
+
+  if (!reihen.length) return;
+
+  // Karten und Ankuendigung zeigen je Eintrag nur den naechsten Termin
+  const naechste = reihen.map((reihe) => reihe[0]).sort(nachZeit);
+
+  // "Heute" / "Samstag" – bei regelmaessigen Terminen mit "jeden …"
+  const wannText = (t, mitDatum) => {
+    const tag = tagLabel(t.datum);
+    const nah = tag === "Heute" || tag === "Morgen";
+    if (t.jeden) return nah ? `${tag} und jeden ${escapeHtml(t.jeden)}` : `Jeden ${escapeHtml(t.jeden)}`;
+    if (nah || !mitDatum) return tag;
+    const [, m, d] = t.datum.split("-").map(Number);
+    return `${tag}, ${d}. ${MONATE[m - 1]}`;
+  };
 
   // Ankuendigung im Startbereich: der naechste Termin mit ankuendigung: true
   const news = document.querySelector("[data-ankuendigung]");
-  const highlight = kommend.find((t) => t.ankuendigung);
+  const highlight = naechste.find((t) => t.ankuendigung);
   if (news && highlight) {
-    const [, hm, hd] = highlight.datum.split("-").map(Number);
-    const tag = tagLabel(highlight.datum);
-    const wann = tag === "Heute" || tag === "Morgen" ? tag : `${tag}, ${hd}. ${MONATE[hm - 1]}`;
     news.innerHTML = `<a href="#termine">${escapeHtml(highlight.titel)} · `
-      + `<strong>${wann}, ${uhr(highlight.von)}–${uhr(highlight.bis)} Uhr</strong></a>`;
+      + `<strong>${wannText(highlight, true)}, ${uhr(highlight.von)}–${uhr(highlight.bis)} Uhr</strong></a>`;
     news.hidden = false;
   }
 
-  list.innerHTML = kommend.map((t) => {
+  list.innerHTML = naechste.map((t) => {
     const [, m, d] = t.datum.split("-").map(Number);
-    const tag = tagLabel(t.datum);
     const ortText = [t.ort, t.stadt].filter(Boolean).join(", ");
     const karte = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(ortText);
     const hinweis = t.hinweis ? `<p>${escapeHtml(t.hinweis)}</p>` : "";
@@ -328,13 +361,15 @@ function initTermine() {
         <div class="date-card__day"><b>${d}</b><span>${MONATE[m - 1]}</span></div>
         <div>
           <h3>${escapeHtml(t.titel)}</h3>
-          <p><strong>${tag}</strong> · ${uhr(t.von)}–${uhr(t.bis)} Uhr</p>
+          <p><strong>${wannText(t, false)}</strong> · ${uhr(t.von)}–${uhr(t.bis)} Uhr</p>
           <p><a href="${karte}" target="_blank" rel="noopener"><u>${escapeHtml(ortText)}</u></a></p>
           ${hinweis}
         </div>
       </article>`;
   }).join("");
 
+  // Fuer Google: Einzeltermine plus die naechsten vier Termine je Reihe
+  const kommend = reihen.flatMap((reihe) => reihe.slice(0, 4)).sort(nachZeit);
   const events = kommend.map((t) => ({
     "@type": "Event",
     name: `MOINA – ${t.titel}`,

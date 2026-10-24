@@ -44,19 +44,31 @@ Kontaktdaten, Impressum und Datenschutzerklärung sind vollständig ausgefüllt
 
 ### Termine pflegen
 
-Alle Markt- und Festtermine stehen in `assets/js/termine-data.js`:
+Alle Markt- und Festtermine stehen in `assets/js/termine-data.js`. Es gibt zwei Arten:
 
 ```js
-{ datum: "2026-10-17", von: "08:00", bis: "13:00",
-  titel: "Markt am Exerzierplatz", ort: "Exerzierplatz", stadt: "Kiel" }
+// Regelmäßig – aktuell der Wochenmarkt
+{ jeden: "Samstag", von: "08:00", bis: "13:00",
+  titel: "Markt am Exerzierplatz", ort: "Exerzierplatz", stadt: "Kiel",
+  ankuendigung: true }
+
+// Einmalig – z. B. ein Stadtfest
+{ datum: "2026-11-14", von: "11:00", bis: "18:00",
+  titel: "Martinsmarkt", ort: "Rathausplatz", stadt: "Kiel" }
 ```
 
+* Regelmäßige Termine rechnen den nächsten Wochentag selbst aus. Optional:
+  `ab: "JJJJ-MM-TT"` (erster Termin), `endet: "JJJJ-MM-TT"` (letzter Termin),
+  `ausser: ["2026-12-26"]` (einzelne Ausfälle, z. B. Feiertage oder Urlaub)
 * Uhrzeiten in Kieler Zeit, Sommer- und Winterzeit werden automatisch berücksichtigt
-* Die Karte zeigt „Heute“ bzw. „Morgen“ statt des Wochentags und verlinkt den Ort auf Google Maps
+* Die Karte zeigt „Heute“/„Morgen“ bzw. „Jeden Samstag“ und verlinkt den Ort auf Google Maps
 * Vergangene Termine verschwinden von selbst, sobald ihre Endzeit vorbei ist
 * Ist kein Termin eingetragen, erscheint der Platzhalter „Nächster Termin folgt“
-* Jeder kommende Termin wird zusätzlich als `Event` für Google ausgegeben
-* Optional: `hinweis: "..."` für eine zusätzliche Zeile auf der Karte
+* Für Google: Einzeltermine und die nächsten vier Termine je regelmäßigem Eintrag als `Event`
+* Optional: `hinweis: "..."` für eine zusätzliche Zeile, `ankuendigung: true` für den Hinweis im Startbereich
+
+**Fester Text:** Der Samstagsmarkt steht außerdem fest in der Meta-Beschreibung
+(`<head>` von `index.html`) und im Footer. Falls der Markt endet, dort mit ändern.
 
 ### Speisekarte pflegen
 
